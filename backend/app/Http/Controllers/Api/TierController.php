@@ -19,7 +19,7 @@ class TierController extends Controller
         try {
             $q       = trim((string) $request->query('q', ''));
             $perPage = (int) $request->query('per_page', 10);
-            $perPage = $perPage > 0 ? min($perPage, 100) : 10;
+            $perPage = $perPage > 0 ? min($perPage, 50) : 10;
             $page    = (int) $request->query('page', 1);
 
             $cacheKey = 'tiers:index:' . md5(json_encode([
@@ -28,28 +28,29 @@ class TierController extends Controller
                 'page'     => $page,
             ]));
 
-            $payload = Cache::tags(['tiers'])->remember($cacheKey, 60, function () use ($q, $perPage) {
-                $query = Tier::query();
+            $payload = Cache::tags(['tiers'])->remember($cacheKey, 300
+                , function () use ($q, $perPage) {
+                    $query = Tier::query();
 
-                if ($q !== '') {
-                    $query->where(function ($w) use ($q) {
-                        $w->where('name', 'like', '%' . $q . '%')
-                            ->orWhere('code', 'like', '%' . $q . '%');
-                    });
-                }
+                    if ($q !== '') {
+                        $query->where(function ($w) use ($q) {
+                            $w->where('name', 'like', '%' . $q . '%')
+                                ->orWhere('code', 'like', '%' . $q . '%');
+                        });
+                    }
 
-                $paginator = $query->orderByDesc('id')->paginate($perPage);
+                    $paginator = $query->orderByDesc('id')->paginate($perPage);
 
-                return [
-                    'items' => $paginator->items(),
-                    'meta'  => [
-                        'current_page' => $paginator->currentPage(),
-                        'per_page'     => $paginator->perPage(),
-                        'total'        => $paginator->total(),
-                        'last_page'    => $paginator->lastPage(),
-                    ],
-                ];
-            });
+                    return [
+                        'items' => $paginator->items(),
+                        'meta'  => [
+                            'current_page' => $paginator->currentPage(),
+                            'per_page'     => $paginator->perPage(),
+                            'total'        => $paginator->total(),
+                            'last_page'    => $paginator->lastPage(),
+                        ],
+                    ];
+                });
 
             return response()->json([
                 'success' => true,
@@ -78,14 +79,14 @@ class TierController extends Controller
 
                 // Nếu set default => bỏ default các tier khác
                 if ($isDefault) {
-                    Tier::query()->where('is_default', 1)->update(['is_default' => 0]);
+                    Tier::query()->where('default', 1)->update(['default' => 0]);
                 }
 
                 $tier = Tier::query()->create([
-                    'name'       => $request->input('name'),
-                    'code'       => $request->input('code'),
-                    'status'     => $request->input('status'),
-                    'is_default' => $isDefault ? 1 : 0,
+                    'name'    => $request->input('name'),
+                    'code'    => $request->input('code'),
+                    'status'  => $request->input('status'),
+                    'default' => $isDefault ? 1 : 0,
                 ]);
             });
 
@@ -159,15 +160,15 @@ class TierController extends Controller
                 if ($isDefault) {
                     Tier::query()
                         ->where('id', '!=', $tier->id)
-                        ->where('is_default', 1)
-                        ->update(['is_default' => 0]);
+                        ->where('default', 1)
+                        ->update(['default' => 0]);
                 }
 
                 $tier->update([
-                    'name'       => $request->input('name'),
-                    'code'       => $request->input('code'),
-                    'status'     => $request->input('status'),
-                    'is_default' => $isDefault ? 1 : 0,
+                    'name'    => $request->input('name'),
+                    'code'    => $request->input('code'),
+                    'status'  => $request->input('status'),
+                    'default' => $isDefault ? 1 : 0,
                 ]);
             });
 
