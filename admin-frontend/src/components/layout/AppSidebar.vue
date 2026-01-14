@@ -21,8 +21,35 @@
         :class="{ active: route.name === 'dashboard' }"
         to="/"
       >
-        <i class="bi bi-speedometer2 me-2"></i>
-        <span v-if="!collapsed">Dashboard</span>
+        <i class="fa-solid fa-gauge-high me-2"></i>
+        <span v-if="!collapsed">Trang chủ</span>
+      </RouterLink>
+
+      <RouterLink
+        class="nav-link"
+        :class="{ active: route.name?.toString().startsWith('products.') }"
+        to="/products"
+      >
+        <i class="fa-solid fa-boxes-stacked me-2"></i>
+        <span v-if="!collapsed">Sản phẩm</span>
+      </RouterLink>
+
+      <RouterLink
+        class="nav-link"
+        :class="{ active: route.name?.toString().startsWith('warehouses.') }"
+        to="/warehouses"
+      >
+        <i class="fa-solid fa-warehouse me-2"></i>
+        <span v-if="!collapsed">Kho</span>
+      </RouterLink>
+
+      <RouterLink
+        class="nav-link"
+        :class="{ active: route.name?.toString().startsWith('receipts.') }"
+        to="/receipts"
+      >
+        <i class="fa-solid fa-file-invoice me-2"></i>
+        <span v-if="!collapsed">Phiếu nhập</span>
       </RouterLink>
 
       <RouterLink
@@ -31,7 +58,7 @@
         to="/categories"
       >
         <i class="fa-solid fa-folder-tree me-2"></i>
-        <span v-if="!collapsed">Categories</span>
+        <span v-if="!collapsed">Danh mục</span>
       </RouterLink>
 
       <RouterLink
@@ -39,8 +66,8 @@
         :class="{ active: route.name?.toString().startsWith('suppliers.') }"
         to="/suppliers"
       >
-        <i class="fa-solid fa-folder-tree me-2"></i>
-        <span v-if="!collapsed">Suppliers</span>
+        <i class="fa-solid fa-truck me-2"></i>
+        <span v-if="!collapsed">Nhà cung cấp</span>
       </RouterLink>
 
       <RouterLink
@@ -48,37 +75,52 @@
         :class="{ active: route.name?.toString().startsWith('tiers.') }"
         to="/tiers"
       >
-        <i class="fa-solid fa-folder-tree me-2"></i>
-        <span v-if="!collapsed">Tiers</span>
+        <i class="fa-solid fa-layer-group me-2"></i>
+        <span v-if="!collapsed">Cấp tài khoản</span>
       </RouterLink>
 
       <RouterLink
         class="nav-link"
-        :class="{ active: route.name === 'orders' }"
+        :class="{ active: route.name?.toString().startsWith('promotions.') }"
+        to="/discounts"
+      >
+        <i class="fa-solid fa-percent me-2"></i>
+        <span v-if="!collapsed">Khuyến mãi</span>
+      </RouterLink>
+
+      <RouterLink
+        class="nav-link"
+        :class="{
+          active: route.name?.toString().startsWith('payment-methods.'),
+        }"
+        to="/payments"
+      >
+        <i class="fa-solid fa-credit-card me-2"></i>
+        <span v-if="!collapsed">Phương thức thanh toán</span>
+      </RouterLink>
+
+      <RouterLink
+        class="nav-link"
+        :class="{ active: route.name?.toString().startsWith('users.') }"
+        to="/users"
+      >
+        <i class="fa-solid fa-users me-2"></i>
+        <span v-if="!collapsed">Tài khoản</span>
+      </RouterLink>
+
+      <RouterLink
+        class="nav-link"
+        :class="{ active: route.name?.toString().startsWith('orders.') }"
         to="/orders"
       >
-        <i class="bi bi-receipt me-2"></i>
-        <span v-if="!collapsed">Orders</span>
-        <span
-          v-if="!collapsed"
-          class="ms-auto badge bg-secondary-subtle text-secondary"
-          >Soon</span
-        >
+        <i class="fa-solid fa-receipt me-2"></i>
+        <span v-if="!collapsed">Đơn hàng</span>
       </RouterLink>
 
-      <RouterLink
-        class="nav-link"
-        :class="{ active: route.name === 'products' }"
-        to="/products"
-      >
-        <i class="bi bi-box-seam me-2"></i>
-        <span v-if="!collapsed">Products</span>
-        <span
-          v-if="!collapsed"
-          class="ms-auto badge bg-secondary-subtle text-secondary"
-          >Soon</span
-        >
-      </RouterLink>
+      <div class="nav-link" role="button" @click="onLogout()">
+        <i class="fa-solid fa-arrow-right-from-bracket me-2"></i>
+        <span v-if="!collapsed">Đăng xuất</span>
+      </div>
     </nav>
 
     <div
@@ -92,9 +134,32 @@
 </template>
 
 <script setup>
+import router from "@/routers";
+import authService from "@/services/auth.service";
+import Swal from "sweetalert2";
 import { useRoute } from "vue-router";
 defineProps({ collapsed: { type: Boolean, default: false } });
 const route = useRoute();
+
+const onLogout = async () => {
+  const confirm = await Swal.fire({
+    title: "Bạn có chắc chắn muốn đăng xuất?",
+    icon: "warning",
+    showCancelButton: true,
+    confirmButtonText: "Đăng xuất",
+    cancelButtonText: "Hủy",
+  });
+  if (confirm.isConfirmed) {
+    try {
+      await authService.logout();
+      router.push("/login");
+    } catch (e) {
+      await Swal.fire("Lỗi!", "Đăng xuất không thành công!", "error");
+      router.push("/login");
+      console.error("Logout error:", e);
+    }
+  }
+};
 </script>
 
 <style scoped>
