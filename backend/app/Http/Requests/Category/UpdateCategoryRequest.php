@@ -4,7 +4,7 @@ namespace App\Http\Requests\Category;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Http\Exceptions\HttpResponseException;
-use Illuminate\Validation\Rule;
+use Illuminate\Support\Facades\Log;
 
 class UpdateCategoryRequest extends FormRequest
 {
@@ -15,15 +15,15 @@ class UpdateCategoryRequest extends FormRequest
 
     public function rules(): array
     {
-        $id = $this->route('id');
-
+        // $id = $this->route('id');
+        $id = (string) $this->route('category') ?: (string) $this->route('id');
         return [
             'name' => [
                 'required',
                 'string',
                 'min:2',
                 'max:100',
-                Rule::unique('categories', 'name')->ignore($id),
+                "unique:categories,name,{$id}",
             ],
         ];
     }

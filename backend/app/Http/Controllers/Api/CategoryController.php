@@ -20,7 +20,7 @@ class CategoryController extends Controller
         try {
             $q       = trim((string) $request->query('q', ''));
             $perPage = (int) $request->query('per_page', 10);
-            $perPage = $perPage > 0 ? min($perPage, 100) : 10;
+            $perPage = $perPage > 0 ? min($perPage, 50) : 10;
             $page    = (int) $request->query('page', 1);
 
             // Cache key theo filter/pagination để tránh trộn kết quả
@@ -30,28 +30,28 @@ class CategoryController extends Controller
                 'page'     => $page,
             ]));
 
-            $payload = Cache::tags(['categories'])->remember($cacheKey, 60, function () use ($q, $perPage) {
-                $query = Category::query()->withCount('products');
+            $payload = Cache::tags(['categories'])->remember($cacheKey, 300
+                , function () use ($q, $perPage) {
+                    $query = Category::query()->withCount('products');
 
-                if ($q !== '') {
-                    $query->where('name', 'like', '%' . $q . '%');
-                }
+                    if ($q !== '') {
+                        $query->where('name', 'like', '%' . $q . '%');
+                    }
 
-                $paginator = $query
-                    ->orderByDesc('id')
-                    ->paginate($perPage);
+                    $paginator = $query
+                        ->orderByDesc('id')
+                        ->paginate($perPage);
 
-                // Trả về dạng data + meta gọn cho frontend
-                return [
-                    'items' => $paginator->items(),
-                    'meta'  => [
-                        'current_page' => $paginator->currentPage(),
-                        'per_page'     => $paginator->perPage(),
-                        'total'        => $paginator->total(),
-                        'last_page'    => $paginator->lastPage(),
-                    ],
-                ];
-            });
+                    return [
+                        'items' => $paginator->items(),
+                        'meta'  => [
+                            'current_page' => $paginator->currentPage(),
+                            'per_page'     => $paginator->perPage(),
+                            'total'        => $paginator->total(),
+                            'last_page'    => $paginator->lastPage(),
+                        ],
+                    ];
+                });
 
             return response()->json([
                 'success' => true,
