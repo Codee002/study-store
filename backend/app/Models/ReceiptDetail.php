@@ -9,6 +9,7 @@ class ReceiptDetail extends Model
         'receipt_id',
         'product_id',
         'quantity',
+        'color_id',
         'purchase_price',
     ];
 
@@ -21,5 +22,10 @@ class ReceiptDetail extends Model
     public function product()
     {
         return $this->belongsTo(Product::class);
+    }
+
+    public function color()
+    {
+        return $this->belongsTo(Color::class);
     }
 }
