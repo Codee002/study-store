@@ -6,8 +6,8 @@
         class="d-flex align-items-start align-items-md-center justify-content-between gap-2 flex-column flex-md-row"
       >
         <div>
-          <h4 class="mb-1">Tạo Tier</h4>
-          <div class="small opacity-75">Nhập thông tin tier và tạo mới</div>
+          <h4 class="mb-1">Chỉnh sửa cấp</h4>
+          <div class="small opacity-75">Cập nhật thông tin cấp</div>
         </div>
 
         <RouterLink
@@ -23,7 +23,14 @@
     <div class="col-12">
       <div class="card card-soft">
         <div class="card-body">
+          <div v-if="loading" class="py-4 text-center opacity-75">
+            <i class="fa-solid fa-spinner fa-spin me-2"></i> Đang tải dữ liệu...
+          </div>
+
           <Form
+            v-else
+            :key="formKey"
+            :initial-values="initialValues"
             :validation-schema="schema"
             @submit="onSubmit"
             v-slot="{ isSubmitting, resetForm }"
@@ -37,7 +44,6 @@
                   type="text"
                   class="form-control bg-transparent"
                   :class="{ 'is-invalid': meta.touched && !meta.valid }"
-                  placeholder="Ví dụ: Retail / Dealer Silver..."
                 />
               </Field>
 
@@ -53,7 +59,6 @@
                   type="text"
                   class="form-control bg-transparent"
                   :class="{ 'is-invalid': meta.touched && !meta.valid }"
-                  placeholder="Ví dụ: RETAIL / DEALER_SILVER..."
                 />
               </Field>
 
@@ -78,17 +83,20 @@
             </div>
 
             <div class="form-check mb-3">
-              <Field name="is_default" type="checkbox" v-slot="{ field }">
+              <Field name="is_default" v-slot="{ value, handleChange }">
                 <input
+                  id="is_default"
                   class="form-check-input"
                   type="checkbox"
-                  v-bind="field"
-                  :checked="field.value"
+                  :checked="!!value"
+                  @change="handleChange($event.target.checked)"
                 />
               </Field>
-              <label class="form-check-label"
-                >Đặt làm mặc định khi user tạo tài khoản</label
-              >
+
+              <label class="form-check-label" for="is_default">
+                Đặt làm mặc định khi user tạo tài khoản
+              </label>
+
               <ErrorMessage
                 name="is_default"
                 class="invalid-feedback d-block"
@@ -101,8 +109,8 @@
                 type="submit"
                 :disabled="isSubmitting"
               >
-                <i class="fa-solid fa-circle-plus me-1"></i>
-                {{ isSubmitting ? "Đang tạo..." : "Tạo Tier" }}
+                <i class="fa-solid fa-floppy-disk me-1"></i>
+                {{ isSubmitting ? "Đang lưu..." : "Lưu thay đổi" }}
               </button>
 
               <button
@@ -122,14 +130,33 @@
 </template>
 
 <script setup>
-import { useRouter } from "vue-router";
+import { onMounted, ref } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { Form, Field, ErrorMessage } from "vee-validate";
 import * as yup from "yup";
 import Swal from "sweetalert2";
 
 import TierService from "../../services/tier.service";
 
+const route = useRoute();
 const router = useRouter();
+const id = route.params.id;
+
+const loading = ref(true);
+const formKey = ref(0);
+
+const initialValues = ref({
+  name: "",
+  code: "",
+  status: "actived",
+  is_default: false,
+});
+const original = ref({
+  name: "",
+  code: "",
+  status: "actived",
+  is_default: false,
+});
 
 const schema = yup.object({
   name: yup
@@ -148,40 +175,64 @@ const schema = yup.object({
       /^[A-Z0-9_]+$/i,
       "Mã chỉ gồm chữ/số/_ (không dấu, không khoảng trắng)"
     ),
-  status: yup
-    .string()
-    .oneOf(["actived", "disabled"], "Trạng thái không hợp lệ")
-    .required("Vui lòng chọn trạng thái"),
-  is_default: yup.boolean(),
+  status: yup.string().oneOf(["actived", "disabled"]).required(),
 });
 
+async function fetchTier() {
+  loading.value = true;
+  try {
+    const res = await TierService.get(id);
+    const data = res?.data ?? res;
+
+    const values = {
+      name: data?.name ?? "",
+      code: data?.code ?? "",
+      status: data?.status ?? "actived",
+      is_default: !!data?.default,
+    };
+
+    original.value = { ...values };
+    initialValues.value = { ...values };
+
+    formKey.value += 1;
+  } catch (e) {
+    const msg =
+      e?.response?.data?.message ||
+      e?.response?.data?.error ||
+      "Không thể tải tier. Vui lòng thử lại.";
+    await Swal.fire("Lỗi", msg, "error");
+    router.push({ name: "tiers.list" });
+  } finally {
+    loading.value = false;
+  }
+}
+
 function onReset(resetFormFn) {
-  resetFormFn({
-    values: { name: "", code: "", status: "actived", is_default: false },
-  });
+  resetFormFn({ values: { ...original.value } });
 }
 
 async function onSubmit(values, { resetForm, setErrors }) {
   try {
-    await TierService.create({
+    await TierService.update(id, {
       name: values.name,
       code: values.code,
       status: values.status,
       is_default: !!values.is_default,
     });
 
-    await Swal.fire("Thành công!", "Tạo tier thành công!", "success");
-    resetForm({
-      values: { name: "", code: "", status: "actived", is_default: false },
-    });
+    await Swal.fire("Thành công!", "Cập nhật tier thành công!", "success");
+
+    original.value = { ...values };
+    resetForm({ values: { ...values } });
 
     router.push({ name: "tiers.list" });
   } catch (e) {
     const msg =
       e?.response?.data?.message ||
       e?.response?.data?.error ||
-      "Tạo tier thất bại. Vui lòng thử lại.";
-    Swal.fire("Tạo tier thất bại", msg, "error");
+      "Cập nhật tier thất bại. Vui lòng thử lại.";
+    console.log(e)
+    await Swal.fire("Cập nhật tier thất bại", msg, "error");
 
     const errorsObj = e?.response?.data?.errors || {};
     const mapped = {};
@@ -194,6 +245,8 @@ async function onSubmit(values, { resetForm, setErrors }) {
     return;
   }
 }
+
+onMounted(fetchTier);
 </script>
 
 <style scoped>

@@ -6,14 +6,14 @@
         class="d-flex align-items-start align-items-md-center justify-content-between gap-2 flex-column flex-md-row"
       >
         <div>
-          <h4 class="mb-1">Tier</h4>
-          <div class="small opacity-75">Quản lý danh sách tier</div>
+          <h4 class="mb-1">Cấp tài khoản</h4>
+          <div class="small opacity-75">Quản lý danh sách cấp</div>
         </div>
 
         <RouterLink
           class="icon-btn icon-add"
           :to="{ name: 'tiers.create' }"
-          title="Thêm Tier"
+          title="Thêm cấp"
         >
           <i class="fa-solid fa-circle-plus"></i>
         </RouterLink>
@@ -53,7 +53,7 @@
               <span
                 class="badge bg-secondary-subtle text-secondary align-self-center"
               >
-                Tổng: {{ filtered.length }}
+                Tổng: {{ meta.total }}
               </span>
             </div>
           </div>
@@ -77,8 +77,8 @@
                 </tr>
               </thead>
 
-              <tbody v-if="paged.length">
-                <tr v-for="t in paged" :key="t.id">
+              <tbody v-if="items.length">
+                <tr v-for="t in items" :key="t.id">
                   <td class="ps-3">
                     <span class="code-pill">{{ t.code }}</span>
                   </td>
@@ -99,7 +99,7 @@
                   <td>
                     <i
                       class="fa-solid fa-circle-check"
-                      v-if="t.is_default"
+                      v-if="t.default"
                       style="color: #16a34a"
                       title="Default"
                     ></i>
@@ -135,7 +135,7 @@
                       <i
                         class="fa-regular fa-folder-open fs-4 d-block mb-2"
                       ></i>
-                      Không có tier phù hợp.
+                      Không có cấp phù hợp.
                     </div>
                   </td>
                 </tr>
@@ -146,11 +146,14 @@
           <!-- Pagination -->
           <div
             class="d-flex justify-content-between align-items-center p-3 border-top"
-            v-if="filtered.length"
+            v-if="meta.total"
           >
             <div class="small opacity-75">
-              Hiển thị {{ pageStart + 1 }} - {{ pageEnd }} /
-              {{ filtered.length }}
+              Hiển thị {{ (meta.current_page - 1) * meta.per_page + 1 }}
+              -
+              {{ Math.min(meta.current_page * meta.per_page, meta.total) }}
+              /
+              {{ meta.total }}
             </div>
 
             <div class="btn-group">
@@ -166,7 +169,7 @@
               </button>
               <button
                 class="btn btn-outline-secondary btn-sm"
-                :disabled="pageEnd >= filtered.length"
+                :disabled="meta.current_page >= meta.last_page"
                 @click="page++"
               >
                 <i class="fa-solid fa-chevron-right"></i>
@@ -186,8 +189,9 @@ import TierService from "../../services/tier.service";
 
 const keyword = ref("");
 const page = ref(1);
-const pageSize = 10;
+const perPage = 5;
 
+const meta = ref({ current_page: 1, per_page: 10, total: 0, last_page: 1 });
 const items = ref([]);
 
 async function fetchTiers() {
@@ -195,39 +199,35 @@ async function fetchTiers() {
     const res = await TierService.getAll({
       q: keyword.value.trim() || undefined,
       page: page.value,
-      per_page: 200,
+      per_page: perPage,
     });
 
     const list = res?.data?.items ?? res?.data ?? res?.items ?? [];
     items.value = Array.isArray(list) ? list : [];
+    meta.value = res?.data?.meta ?? {
+      current_page: 1,
+      per_page: perPage,
+      total: items.value.length,
+      last_page: 1,
+    };
   } catch (e) {
     Swal.fire("Lỗi", "Không thể tải tier", "error");
   }
 }
 
-onMounted(fetchTiers);
+onMounted(async () => {
+  await fetchTiers();
+});
 
-watch(keyword, () => {
+watch(keyword, async () => {
   page.value = 1;
+  await fetchTiers();
 });
 
-const filtered = computed(() => {
-  const k = keyword.value.trim().toLowerCase();
-  if (!k) return items.value;
-  return items.value.filter((x) => {
-    const name = (x.name || "").toLowerCase();
-    const code = (x.code || "").toLowerCase();
-    return name.includes(k) || code.includes(k);
-  });
+watch(page, async () => {
+  console.log(page.value);
+  await fetchTiers();
 });
-
-const pageStart = computed(() => (page.value - 1) * pageSize);
-const pageEnd = computed(() =>
-  Math.min(pageStart.value + pageSize, filtered.value.length)
-);
-const paged = computed(() =>
-  filtered.value.slice(pageStart.value, pageEnd.value)
-);
 
 async function onDeleteClick(id) {
   const result = await Swal.fire({

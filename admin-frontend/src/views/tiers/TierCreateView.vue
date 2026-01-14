@@ -6,8 +6,8 @@
         class="d-flex align-items-start align-items-md-center justify-content-between gap-2 flex-column flex-md-row"
       >
         <div>
-          <h4 class="mb-1">Tạo Tier</h4>
-          <div class="small opacity-75">Nhập thông tin tier và tạo mới</div>
+          <h4 class="mb-1">Tạo cấp</h4>
+          <div class="small opacity-75">Nhập thông tin cấp và tạo mới</div>
         </div>
 
         <RouterLink
@@ -27,6 +27,7 @@
             :validation-schema="schema"
             @submit="onSubmit"
             v-slot="{ isSubmitting, resetForm }"
+            :initial-values="{ status: 'actived' }"
           >
             <div class="mb-3">
               <label class="form-label">Tên cấp tài khoản</label>
@@ -69,8 +70,8 @@
                   class="form-select bg-transparent"
                   :class="{ 'is-invalid': meta.touched && !meta.valid }"
                 >
-                  <option value="actived">Bật (actived)</option>
-                  <option value="disabled">Tắt (disabled)</option>
+                  <option value="actived">Bật</option>
+                  <option value="disabled">Tắt</option>
                 </select>
               </Field>
 
@@ -78,15 +79,17 @@
             </div>
 
             <div class="form-check mb-3">
-              <Field name="is_default" type="checkbox" v-slot="{ field }">
+              <Field name="is_default" v-slot="{ value, handleChange }">
                 <input
+                  id="is_default"
                   class="form-check-input"
                   type="checkbox"
-                  v-bind="field"
-                  :checked="field.value"
+                  :checked="!!value"
+                  @change="handleChange($event.target.checked)"
                 />
               </Field>
-              <label class="form-check-label"
+
+              <label class="form-check-label" for="is_default"
                 >Đặt làm mặc định khi user tạo tài khoản</label
               >
               <ErrorMessage
@@ -102,7 +105,7 @@
                 :disabled="isSubmitting"
               >
                 <i class="fa-solid fa-circle-plus me-1"></i>
-                {{ isSubmitting ? "Đang tạo..." : "Tạo Tier" }}
+                {{ isSubmitting ? "Đang tạo..." : "Tạo cấp" }}
               </button>
 
               <button
@@ -152,7 +155,6 @@ const schema = yup.object({
     .string()
     .oneOf(["actived", "disabled"], "Trạng thái không hợp lệ")
     .required("Vui lòng chọn trạng thái"),
-  is_default: yup.boolean(),
 });
 
 function onReset(resetFormFn) {
@@ -164,9 +166,7 @@ function onReset(resetFormFn) {
 async function onSubmit(values, { resetForm, setErrors }) {
   try {
     await TierService.create({
-      name: values.name,
-      code: values.code,
-      status: values.status,
+      ...values,
       is_default: !!values.is_default,
     });
 
@@ -181,8 +181,8 @@ async function onSubmit(values, { resetForm, setErrors }) {
       e?.response?.data?.message ||
       e?.response?.data?.error ||
       "Tạo tier thất bại. Vui lòng thử lại.";
-    Swal.fire("Tạo tier thất bại", msg, "error");
-
+    await Swal.fire("Tạo tier thất bại", msg, "error");
+  console.log(e)
     const errorsObj = e?.response?.data?.errors || {};
     const mapped = {};
     Object.keys(errorsObj).forEach((k) => {
