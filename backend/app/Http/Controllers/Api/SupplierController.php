@@ -19,7 +19,7 @@ class SupplierController extends Controller
         try {
             $q       = trim((string) $request->query('q', ''));
             $perPage = (int) $request->query('per_page', 10);
-            $perPage = $perPage > 0 ? min($perPage, 100) : 10;
+            $perPage = $perPage > 0 ? min($perPage, 50) : 10;
             $page    = (int) $request->query('page', 1);
 
             $cacheKey = 'suppliers:index:' . md5(json_encode([
@@ -28,28 +28,29 @@ class SupplierController extends Controller
                 'page'     => $page,
             ]));
 
-            $payload = Cache::tags(['suppliers'])->remember($cacheKey, 60, function () use ($q, $perPage) {
-                $query = Supplier::query();
+            $payload = Cache::tags(['suppliers'])->remember($cacheKey, 300
+                , function () use ($q, $perPage) {
+                    $query = Supplier::query();
 
-                if ($q !== '') {
-                    $query->where(function ($w) use ($q) {
-                        $w->where('name', 'like', '%' . $q . '%')
-                            ->orWhere('contact_number', 'like', '%' . $q . '%');
-                    });
-                }
+                    if ($q !== '') {
+                        $query->where(function ($w) use ($q) {
+                            $w->where('name', 'like', '%' . $q . '%')
+                                ->orWhere('contact_number', 'like', '%' . $q . '%');
+                        });
+                    }
 
-                $paginator = $query->orderByDesc('id')->paginate($perPage);
+                    $paginator = $query->orderByDesc('id')->paginate($perPage);
 
-                return [
-                    'items' => $paginator->items(),
-                    'meta'  => [
-                        'current_page' => $paginator->currentPage(),
-                        'per_page'     => $paginator->perPage(),
-                        'total'        => $paginator->total(),
-                        'last_page'    => $paginator->lastPage(),
-                    ],
-                ];
-            });
+                    return [
+                        'items' => $paginator->items(),
+                        'meta'  => [
+                            'current_page' => $paginator->currentPage(),
+                            'per_page'     => $paginator->perPage(),
+                            'total'        => $paginator->total(),
+                            'last_page'    => $paginator->lastPage(),
+                        ],
+                    ];
+                });
 
             return response()->json([
                 'success' => true,
