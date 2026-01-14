@@ -207,7 +207,7 @@ async function onSubmit(values, { resetForm, setErrors }) {
       e?.response?.data?.message ||
       e?.response?.data?.error ||
       "Cập nhật nhà cung cấp thất bại. Vui lòng thử lại.";
-    Swal.fire("Cập nhật nhà cung cấp thất bại", msg, "error");
+    await Swal.fire("Cập nhật nhà cung cấp thất bại", msg, "error");
 
     const errorsObj = e?.response?.data?.errors || {};
     const mapped = {};

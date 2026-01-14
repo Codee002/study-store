@@ -158,9 +158,8 @@ async function onSubmit(values, { resetForm, setErrors }) {
       e?.response?.data?.message ||
       e?.response?.data?.error ||
       "Tạo nhà cung cấp thất bại. Vui lòng thử lại.";
-    Swal.fire("Tạo nhà cung cấp thất bại", msg, "error");
+    await Swal.fire("Tạo nhà cung cấp thất bại", msg, "error");
 
-    // map lỗi Laravel 422 vào đúng ô input
     const errorsObj = e?.response?.data?.errors || {};
     const mapped = {};
     Object.keys(errorsObj).forEach((k) => {
@@ -168,8 +167,9 @@ async function onSubmit(values, { resetForm, setErrors }) {
         ? errorsObj[k][0]
         : String(errorsObj[k]);
     });
+    console.log(mapped);
     setErrors(mapped);
-    return;
+    // return;
   }
 }
 </script>

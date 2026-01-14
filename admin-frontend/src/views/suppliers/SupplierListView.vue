@@ -53,7 +53,7 @@
               <span
                 class="badge bg-secondary-subtle text-secondary align-self-center"
               >
-                Tổng: {{ filtered.length }}
+                Tổng: {{ meta.total }}
               </span>
             </div>
           </div>
@@ -77,8 +77,8 @@
                 </tr>
               </thead>
 
-              <tbody v-if="paged.length">
-                <tr v-for="s in paged" :key="s.id">
+              <tbody v-if="items.length">
+                <tr v-for="s in items" :key="s.id">
                   <td class="ps-3">
                     <span class="code-pill">S{{ s.id }}</span>
                   </td>
@@ -137,11 +137,14 @@
           <!-- Pagination -->
           <div
             class="d-flex justify-content-between align-items-center p-3 border-top"
-            v-if="filtered.length"
+            v-if="meta.total"
           >
             <div class="small opacity-75">
-              Hiển thị {{ pageStart + 1 }} - {{ pageEnd }} /
-              {{ filtered.length }}
+              Hiển thị {{ (meta.current_page - 1) * meta.per_page + 1 }}
+              -
+              {{ Math.min(meta.current_page * meta.per_page, meta.total) }}
+              /
+              {{ meta.total }}
             </div>
 
             <div class="btn-group">
@@ -157,7 +160,7 @@
               </button>
               <button
                 class="btn btn-outline-secondary btn-sm"
-                :disabled="pageEnd >= filtered.length"
+                :disabled="meta.current_page >= meta.last_page"
                 @click="page++"
               >
                 <i class="fa-solid fa-chevron-right"></i>
@@ -173,12 +176,13 @@
 <script setup>
 import { computed, ref, watch, onMounted } from "vue";
 import Swal from "sweetalert2";
-import SupplierService from "../../services/supplier.service";
+import SupplierService from "@/services/supplier.service";
 
 const keyword = ref("");
 const page = ref(1);
-const pageSize = 10;
+const perPage = 8;
 
+const meta = ref({ current_page: 1, per_page: 10, total: 0, last_page: 1 });
 const items = ref([]);
 const loading = ref(false);
 
@@ -188,12 +192,21 @@ async function fetchSuppliers() {
     const res = await SupplierService.getAll({
       q: keyword.value.trim() || undefined,
       page: page.value,
-      per_page: 200,
+      per_page: perPage,
     });
+
+    console.log(res);
 
     const list = res?.data?.items ?? res?.data ?? res?.items ?? [];
     items.value = Array.isArray(list) ? list : [];
+    meta.value = res?.data?.meta ?? {
+      current_page: 1,
+      per_page: perPage,
+      total: 0,
+      last_page: 1,
+    };
   } catch (e) {
+    console.error(e);
     const msg =
       e?.response?.data?.message ||
       e?.response?.data?.error ||
@@ -204,25 +217,20 @@ async function fetchSuppliers() {
   }
 }
 
-onMounted(fetchSuppliers);
+// Pagination
+onMounted(async () => {
+  await fetchSuppliers();
+});
 
-watch(keyword, () => {
+watch(keyword, async () => {
   page.value = 1;
+  await fetchSuppliers();
 });
 
-const filtered = computed(() => {
-  const k = keyword.value.trim().toLowerCase();
-  if (!k) return items.value;
-  return items.value.filter((x) => (x.name || "").toLowerCase().includes(k));
+watch(page, async () => {
+  console.log(page.value);
+  await fetchSuppliers();
 });
-
-const pageStart = computed(() => (page.value - 1) * pageSize);
-const pageEnd = computed(() =>
-  Math.min(pageStart.value + pageSize, filtered.value.length)
-);
-const paged = computed(() =>
-  filtered.value.slice(pageStart.value, pageEnd.value)
-);
 
 async function onDeleteClick(id) {
   const result = await Swal.fire({
