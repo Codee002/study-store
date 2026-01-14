@@ -5,8 +5,8 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 export const createApiClient = (baseURL = "") => {
   const instance = axios.create({
     baseURL: baseURL ? `${API_BASE_URL}${baseURL}` : API_BASE_URL,
-    timeout: 10000,
-    withCredentials: false,
+    timeout: 50000,
+    withCredentials: true,
     headers: {
       Accept: "application/json",
     },
