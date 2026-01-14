@@ -2,13 +2,13 @@
 import { createApiClient } from "./api.service";
 
 class CategoryService {
-  // đổi baseUrl đúng API của bạn nếu khác
   constructor(baseUrl = "/api/categories") {
     this.api = createApiClient(baseUrl);
   }
 
-  async getAll() {
-    return (await this.api.get("/")).data;
+  async getAll(params = {}) {
+    console.log(params);
+    return (await this.api.get("/", { params })).data;
   }
 
   async create(data) {

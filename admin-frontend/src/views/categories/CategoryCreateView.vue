@@ -26,7 +26,7 @@
           <Form
             :validation-schema="schema"
             @submit="onSubmit"
-            v-slot="{ isSubmitting, resetForm }"
+            v-slot="{ isSubmitting, resetForm,  }"
           >
             <div class="mb-3">
               <label class="form-label">Tên danh mục</label>
@@ -63,16 +63,6 @@
                 <i class="fa-solid fa-rotate-left me-1"></i> Reset
               </button>
             </div>
-
-            <div v-if="serverError" class="alert alert-danger mt-3 mb-0">
-              <i class="fa-solid fa-triangle-exclamation me-1"></i>
-              {{ serverError }}
-            </div>
-
-            <div v-if="serverOk" class="alert alert-success mt-3 mb-0">
-              <i class="fa-solid fa-circle-check me-1"></i>
-              {{ serverOk }}
-            </div>
           </Form>
         </div>
       </div>
@@ -101,8 +91,6 @@ const schema = yup.object({
 });
 
 function onReset(resetFormFn) {
-  serverError.value = "";
-  serverOk.value = "";
   resetFormFn({ values: { name: "" } });
 }
 
@@ -118,7 +106,7 @@ async function onSubmit(values, { resetForm, setErrors }) {
       e?.response?.data?.message ||
       e?.response?.data?.error ||
       "Tạo danh mục thất bại. Vui lòng thử lại.";
-    Swal.fire("Tạo danh mục thất bại", msg, "error");
+    await Swal.fire("Tạo danh mục thất bại", msg, "error");
     const errorsObj = e?.response?.data?.errors || {};
     const mapped = {};
     console.log(errorsObj);
@@ -127,6 +115,7 @@ async function onSubmit(values, { resetForm, setErrors }) {
         ? errorsObj[k][0]
         : String(errorsObj[k]);
     });
+    console.log(mapped);
     setErrors(mapped);
     return;
   }

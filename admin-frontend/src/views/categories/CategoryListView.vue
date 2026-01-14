@@ -53,7 +53,7 @@
               <span
                 class="badge bg-secondary-subtle text-secondary align-self-center"
               >
-                Tổng: {{ filtered.length }}
+                Tổng: {{ meta.total }}
               </span>
             </div>
           </div>
@@ -76,8 +76,8 @@
                 </tr>
               </thead>
 
-              <tbody v-if="paged.length">
-                <tr v-for="c in paged" :key="c.id">
+              <tbody v-if="items.length">
+                <tr v-for="c in items" :key="c.id">
                   <!-- Code -->
                   <td class="ps-3">
                     <span class="code-pill">C{{ c.id }}</span>
@@ -93,7 +93,7 @@
                   </td>
 
                   <td class="text-end">
-                    <span class="badge count-badge">{{ c.product_count }}</span>
+                    <span class="badge count-badge">{{ c.products_count }}</span>
                   </td>
 
                   <!-- Actions: edit + delete icons -->
@@ -134,14 +134,18 @@
             </table>
           </div>
 
-          <!-- Pagination (simple) -->
+          <!-- Pagination  -->
           <div
             class="d-flex justify-content-between align-items-center p-3 border-top"
-            v-if="filtered.length"
+            v-if="meta.total"
           >
             <div class="small opacity-75">
-              Hiển thị {{ pageStart + 1 }} - {{ pageEnd }} /
-              {{ filtered.length }}
+              Hiển thị
+              {{ (meta.current_page - 1) * meta.per_page + 1 }}
+              -
+              {{ Math.min(meta.current_page * meta.per_page, meta.total) }}
+              /
+              {{ meta.total }}
             </div>
 
             <div class="btn-group">
@@ -157,7 +161,7 @@
               </button>
               <button
                 class="btn btn-outline-secondary btn-sm"
-                :disabled="pageEnd >= filtered.length"
+                :disabled="meta.current_page >= meta.last_page"
                 @click="page++"
               >
                 <i class="fa-solid fa-chevron-right"></i>
@@ -174,13 +178,13 @@
 import { computed, ref, watch, onMounted } from "vue";
 import Swal from "sweetalert2";
 import CategoryService from "../../services/category.service";
-import categoryService from "../../services/category.service";
 
 const keyword = ref("");
 const page = ref(1);
-const pageSize = 10;
+const perPage = 8;
 
 const items = ref([]);
+const meta = ref({ current_page: 1, per_page: 10, total: 0, last_page: 1 });
 const loading = ref(false);
 
 async function fetchCategories() {
@@ -189,12 +193,17 @@ async function fetchCategories() {
     const res = await CategoryService.getAll({
       q: keyword.value.trim() || undefined,
       page: page.value,
-      per_page: 200,
+      per_page: perPage,
     });
 
-    const list = res?.data?.items ?? res?.data ?? res?.items ?? [];
-
+    const list = res?.data?.items  ?? [];
     items.value = Array.isArray(list) ? list : [];
+    meta.value = res?.data?.meta ?? {
+      current_page: 1,
+      per_page: perPage,
+      total: 0,
+      last_page: 1,
+    };
   } catch (e) {
     const msg =
       e?.response?.data?.message ||
@@ -206,25 +215,19 @@ async function fetchCategories() {
   }
 }
 
-onMounted(fetchCategories);
+onMounted(async () => {
+  await fetchCategories();
+});
 
-watch(keyword, () => {
+watch(keyword, async () => {
   page.value = 1;
+  await fetchCategories();
 });
 
-const filtered = computed(() => {
-  const k = keyword.value.trim().toLowerCase();
-  if (!k) return items.value;
-  return items.value.filter((x) => (x.name || "").toLowerCase().includes(k));
+watch(page, async () => {
+  console.log(page.value);
+  await fetchCategories();
 });
-
-const pageStart = computed(() => (page.value - 1) * pageSize);
-const pageEnd = computed(() =>
-  Math.min(pageStart.value + pageSize, filtered.value.length)
-);
-const paged = computed(() =>
-  filtered.value.slice(pageStart.value, pageEnd.value)
-);
 
 async function onDeleteClick(categoryId) {
   const result = await Swal.fire({
@@ -238,7 +241,7 @@ async function onDeleteClick(categoryId) {
 
   if (result.isConfirmed) {
     try {
-      await categoryService.delete(categoryId);
+      await CategoryService.delete(categoryId);
       await fetchCategories();
       Swal.fire({
         title: "Xóa thành công",
@@ -254,6 +257,7 @@ async function onDeleteClick(categoryId) {
     }
   }
 }
+
 </script>
 
 
