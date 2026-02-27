@@ -11,6 +11,7 @@ class Profile extends Model
         'phone',
         'gender',
         'birthday',
+        'avatar',
     ];
 
     // Relationships
