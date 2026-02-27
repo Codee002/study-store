@@ -2,9 +2,11 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Auth\ChangePasswordRequest;
 use App\Http\Requests\RegisterCustomerRequest;
 use App\Models\Cart;
 use App\Models\Profile;
+use App\Models\Tier;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -12,14 +14,25 @@ use Illuminate\Support\Facades\Hash;
 
 class AuthController extends Controller
 {
+    private function appendProfileMeta(User $user): User
+    {
+        $user->setAttribute('avatar', $user->profile?->avatar);
+        $user->setAttribute('name', $user->profile?->name);
+        $user->setAttribute('phone', $user->profile?->phone);
+
+        return $user;
+    }
+
     public function registerCustomer(RegisterCustomerRequest $request)
     {
         $user = null;
         try {
             DB::transaction(function () use ($request, &$user) {
-                $request['status'] = "actived";
-                $request['role']   = 'user';
-                $user              = User::query()->create($request->all());
+                $request['status'] = 'actived';
+                $request['role'] = 'user';
+                $user = User::query()->create($request->all());
+
+                $tier = Tier::query()->where('default', 1)->first();
 
                 Profile::query()->create([
                     'user_id'  => $user->id,
@@ -27,22 +40,23 @@ class AuthController extends Controller
                     'phone'    => $request->phone,
                     'birthday' => $request->birthday,
                     'gender'   => $request->gender,
-                ]
-                );
+                    'tier'     => $tier?->id,
+                ]);
 
                 Cart::query()->create([
                     'user_id' => $user->id,
                 ]);
             });
+
             return response()->json([
-                "success" => true,
-                'message' => "Đăng ký thành công",
-                "user"    => $user,
+                'success' => true,
+                'message' => 'Đăng ký thành công',
+                'user'    => $user,
             ], 200);
         } catch (\Exception $e) {
             return response()->json([
-                "success" => false,
-                'message' => "Đăng ký thất bại. Vui lòng thử lại sau!",
+                'success' => false,
+                'message' => 'Đăng ký thất bại. Vui lòng thử lại sau!',
                 'error'   => $e->getMessage(),
             ], 500);
         }
@@ -62,8 +76,8 @@ class AuthController extends Controller
 
         if (! $user) {
             return response()->json([
-                "success" => false,
-                'message' => "Tài khoản không tồn tại",
+                'success' => false,
+                'message' => 'Tài khoản không tồn tại',
                 'errors'  => [
                     'username' => ['Tài khoản không tồn tại'],
                 ],
@@ -73,7 +87,7 @@ class AuthController extends Controller
         if ($user->status !== 'actived') {
             return response()->json([
                 'success' => false,
-                'message' => 'Tài khoản đã bị khóa ',
+                'message' => 'Tài khoản đã bị khóa',
                 'errors'  => [
                     'username' => ['Tài khoản đã bị khóa'],
                 ],
@@ -91,7 +105,9 @@ class AuthController extends Controller
         }
 
         $token = $user->createToken('customer_token')->plainTextToken;
-        $user->load("profile");
+        $user->load(['profile', 'tier']);
+        $this->appendProfileMeta($user);
+
         return response()->json([
             'success'      => true,
             'message'      => 'Đăng nhập thành công.',
@@ -99,7 +115,6 @@ class AuthController extends Controller
             'access_token' => $token,
             'token_type'   => 'Bearer',
         ]);
-
     }
 
     public function loginAdmin(Request $request)
@@ -116,8 +131,8 @@ class AuthController extends Controller
 
         if (! $user) {
             return response()->json([
-                "success" => false,
-                'message' => "Tài khoản không tồn tại",
+                'success' => false,
+                'message' => 'Tài khoản không tồn tại',
                 'errors'  => [
                     'username' => ['Tài khoản không tồn tại'],
                 ],
@@ -127,7 +142,7 @@ class AuthController extends Controller
         if ($user->status !== 'actived') {
             return response()->json([
                 'success' => false,
-                'message' => 'Tài khoản đã bị khóa ',
+                'message' => 'Tài khoản đã bị khóa',
                 'errors'  => [
                     'username' => ['Tài khoản đã bị khóa'],
                 ],
@@ -145,7 +160,9 @@ class AuthController extends Controller
         }
 
         $token = $user->createToken('admin_token')->plainTextToken;
-        $user->load("profile");
+        $user->load(['profile', 'tier']);
+        $this->appendProfileMeta($user);
+
         return response()->json([
             'success'      => true,
             'message'      => 'Đăng nhập thành công.',
@@ -153,13 +170,14 @@ class AuthController extends Controller
             'access_token' => $token,
             'token_type'   => 'Bearer',
         ]);
-
     }
 
     public function me(Request $request)
     {
         $user = $request->user();
-        $user->load("profile");
+        $user->load(['profile', 'tier']);
+        $this->appendProfileMeta($user);
+
         return response()->json([
             'success' => true,
             'message' => 'Lấy thông tin thành công.',
@@ -167,10 +185,54 @@ class AuthController extends Controller
         ]);
     }
 
+    public function changePassword(ChangePasswordRequest $request)
+    {
+        try {
+            $user = $request->user();
+            $validated = $request->validated();
+
+            if (! Hash::check($validated['current_password'], $user->password)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Mật khẩu hiện tại không đúng',
+                    'errors'  => [
+                        'current_password' => ['Mật khẩu hiện tại không đúng'],
+                    ],
+                ], 422);
+            }
+
+            if (Hash::check($validated['password'], $user->password)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Mật khẩu mới phải khác mật khẩu hiện tại',
+                    'errors'  => [
+                        'password' => ['Mật khẩu mới phải khác mật khẩu hiện tại'],
+                    ],
+                ], 422);
+            }
+
+            $user->update([
+                'password' => Hash::make($validated['password']),
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Đổi mật khẩu thành công',
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Đổi mật khẩu thất bại',
+                'error'   => $e->getMessage(),
+            ], 500);
+        }
+    }
+
     public function logout(Request $request)
     {
         $user = $request->user();
-        $user->currentAccessToken()->delete();
+        $user->currentAccessToken()?->delete();
+
         return response()->json([
             'success' => true,
             'message' => 'Đăng xuất thành công.',

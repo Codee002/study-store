@@ -17,4 +17,9 @@ class Tier extends Model
     {
         return $this->hasMany(User::class);
     }
+
+    public function prices()
+    {
+        return $this->hasMany(Price::class);
+    }
 }
