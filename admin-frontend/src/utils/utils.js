@@ -1,9 +1,16 @@
-const formatMoney = (number) => {
-  try {
-    return new Intl.NumberFormat("vi-VN").format(Number(number || 0)) + " ₫";
-  } catch {
-    return String(number || 0);
-  }
+const toNumber = (value) => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+};
+
+const toInt = (value) => {
+  const n = toNumber(value);
+  return Math.round(n);
+};
+
+const formatMoney = (value) => {
+  const n = toInt(value);
+  return new Intl.NumberFormat("vi-VN").format(n) + " ₫";
 };
 
 const getProductThumb = (product) => {
@@ -39,7 +46,7 @@ const statusTableBadgeClass = (status) => {
     default:
       return "bg-secondary-subtle text-secondary";
   }
-}
+};
 
 const formatDateTimeVN = (input) => {
   if (!input) return "—";
