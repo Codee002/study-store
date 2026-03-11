@@ -1,8 +1,10 @@
-import { createRouter, createWebHistory } from "vue-router";
+﻿import { createRouter, createWebHistory } from "vue-router";
 import LoginView from "@/views/auth/LoginView.vue";
 import RegisterView from "@/views/auth/RegisterView.vue";
 import ProductsView from "@/views/ProductsView.vue";
 import AccountSettingsView from "@/views/account/AccountSettingsView.vue";
+import ContactListView from "@/views/messages/ContactListView.vue";
+import ContactChatView from "@/views/messages/ContactChatView.vue";
 import AuthService from "@/services/auth.service";
 
 const routes = [
@@ -72,6 +74,19 @@ const routes = [
     meta: { title: "Chi tiết đơn hàng", requeresAuth: true },
   },
   {
+    path: "/contact",
+    name: "contact.list",
+    component: ContactListView,
+    meta: { title: "Liên hệ", requeresAuth: true },
+  },
+  {
+    path: "/contact/:id",
+    name: "contact.chat",
+    component: ContactChatView,
+    meta: { title: "Trò chuyện", requeresAuth: true },
+    props: true,
+  },
+  {
     path: "/account/settings",
     name: "account-settings",
     component: AccountSettingsView,
@@ -108,5 +123,4 @@ router.afterEach((to) => {
 });
 
 export default router;
-
 
