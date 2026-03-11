@@ -16,42 +16,61 @@
 
         <article class="panel mb-3">
           <h5 class="mb-1">1) Xuất file báo giá</h5>
-          <div class="small text-muted mb-3">Nhận file CSV báo giá theo tier hiện tại của tài khoản.</div>
+          <div class="small text-muted mb-3">Nhận file Excel (.xlsx) báo giá theo tier hiện tại của tài khoản.</div>
           <button class="btn btn-main" type="button" :disabled="downloading" @click="downloadMyQuotation">
             <i v-if="downloading" class="fa-solid fa-spinner fa-spin me-1"></i>
             <i v-else class="fa-solid fa-file-arrow-down me-1"></i>
             Nhận file báo giá
           </button>
+          <div v-if="downloadError" class="text-danger small mt-2">{{ downloadError }}</div>
         </article>
 
         <article class="panel mb-3">
           <h5 class="mb-1">2) Nhập file mua vật phẩm</h5>
-          <div class="small text-muted mb-3">Hỗ trợ CSV với cột: <b>product_id</b> hoặc <b>product_name</b>, <b>quantity</b>.</div>
+          <div class="small text-muted mb-3">
+            Hỗ trợ Excel (.xlsx/.xls) với cột: <b>product_id</b> hoặc <b>product_name</b>, <b>color_option</b>, <b>unit</b>,
+            <b>min_quantity</b> hoặc <b>quantity</b>.
+          </div>
 
           <div class="d-flex align-items-end gap-2 flex-wrap mb-3">
-            <!-- <div>
-              <label class="small text-muted mb-1 d-block">Tier tính giá</label>
-              <select v-model="selectedFileTierId" class="form-select form-select-sm" style="min-width: 190px">
-                <option value="">-- Chọn tier --</option>
-                <option v-for="t in tiers" :key="`tier-file-${t.id}`" :value="String(t.id)">{{ t.name }} ({{ t.code }})</option>
-              </select>
-            </div> -->
-
             <input
               ref="purchaseFileRef"
               class="form-control"
               type="file"
-              accept=".csv,text/csv"
+              accept=".xlsx,.xls"
               style="max-width: 360px"
               @change="onPurchaseFileChange"
             />
 
-            <button class="btn btn-main" type="button" :disabled="!purchaseRows.length || calculatingFilePrice" @click="calculatePriceFromFile">
+            <button class="btn btn-main" type="button" :disabled="!purchaseRows.length || calculatingFilePrice" @click="validatePurchaseFileRows">
               <i v-if="calculatingFilePrice" class="fa-solid fa-spinner fa-spin me-1"></i>
-              Tính giá từ file
+              Kiểm tra lại file
             </button>
 
-            <button class="btn btn-outline-danger" type="button" :disabled="!purchaseRows.length" @click="clearPurchaseRows">Xóa file</button>
+            <button class="btn btn-outline-danger" type="button" :disabled="!purchaseRows.length" @click="clearPurchaseRows">
+              Xóa file
+            </button>
+          </div>
+
+          <div v-if="validationSummary" class="row g-2 mb-3">
+            <div class="col-12 col-md-4">
+              <div class="summary-card">
+                <div class="summary-label">Tổng dòng</div>
+                <div class="summary-value">{{ validationSummary.total_rows || 0 }}</div>
+              </div>
+            </div>
+            <div class="col-12 col-md-4">
+              <div class="summary-card summary-valid">
+                <div class="summary-label">Hợp lệ</div>
+                <div class="summary-value">{{ validationSummary.valid_rows || 0 }}</div>
+              </div>
+            </div>
+            <div class="col-12 col-md-4">
+              <div class="summary-card summary-invalid">
+                <div class="summary-label">Không hợp lệ</div>
+                <div class="summary-value">{{ validationSummary.invalid_rows || 0 }}</div>
+              </div>
+            </div>
           </div>
 
           <div v-if="purchaseRows.length" class="table-responsive">
@@ -60,32 +79,56 @@
                 <tr>
                   <th style="width: 60px">#</th>
                   <th>Sản phẩm</th>
-                  <th class="text-end" style="width: 110px">Số lượng</th>
+                  <th>Màu</th>
+                  <th>Đơn vị</th>
+                  <th class="text-end" style="width: 110px">SL đặt</th>
+                  <th class="text-end" style="width: 110px">Tồn</th>
                   <th class="text-end" style="width: 170px">Đơn giá</th>
                   <th class="text-end" style="width: 170px">Thành tiền</th>
-                  <th style="width: 160px">Trạng thái</th>
+                  <th style="width: 260px">Trạng thái</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="row in purchaseRows" :key="`upload-row-${row.row_no}`">
                   <td>{{ row.row_no }}</td>
                   <td>{{ row.product_name || row.product_id || "-" }}</td>
-                  <td class="text-end">{{ row.quantity }}</td>
+                  <td>{{ row.color_option || "-" }}</td>
+                  <td>{{ row.unit || "-" }}</td>
+                  <td class="text-end">{{ row.quantity || row.min_quantity || 0 }}</td>
+                  <td class="text-end">{{ row.available_stock ?? "-" }}</td>
                   <td class="text-end">{{ formatVnd(row.unit_price || 0) }}</td>
                   <td class="text-end">{{ formatVnd(row.line_total || 0) }}</td>
                   <td>
-                    <span
-                      class="badge"
-                      :class="row.matched ? 'bg-success-subtle text-success-emphasis' : 'bg-warning-subtle text-warning-emphasis'"
-                    >
-                      {{ row.matched ? "Đã dò sản phẩm" : "Chưa dò sản phẩm" }}
-                    </span>
+                    <div class="d-flex flex-column gap-1">
+                      <span class="badge" :class="row.is_valid ? 'bg-success-subtle text-success-emphasis' : 'bg-danger-subtle text-danger-emphasis'">
+                        {{ row.is_valid ? "Hợp lệ" : "Lỗi dữ liệu" }}
+                      </span>
+                      <div v-if="row.errors?.length" class="small text-danger">
+                        {{ row.errors.join("; ") }}
+                      </div>
+                      <div v-if="row.warnings?.length" class="small text-warning-emphasis">
+                        {{ row.warnings.join("; ") }}
+                      </div>
+                    </div>
                   </td>
                 </tr>
                 <tr>
-                  <th colspan="4" class="text-end">Tổng tạm tính</th>
+                  <th colspan="7" class="text-end">Tổng tạm tính</th>
                   <th class="text-end text-danger">{{ formatVnd(uploadGrandTotal) }}</th>
                   <th></th>
+                </tr>
+                <tr>
+                  <th colspan="9" class="text-end">
+                    <button
+                      class="btn btn-success"
+                      type="button"
+                      :disabled="!hasValidRows || addingToCart"
+                      @click="addValidRowsToCart"
+                    >
+                      <i v-if="addingToCart" class="fa-solid fa-spinner fa-spin me-1"></i>
+                      Thêm giỏ hàng
+                    </button>
+                  </th>
                 </tr>
               </tbody>
             </table>
@@ -107,7 +150,7 @@
           <div v-if="loading" class="small text-muted">Đang tải dữ liệu...</div>
 
           <div v-else class="row g-3">
-            <div class="col-12 col-lg-4">
+            <div class="col-12">
               <label class="form-label">Sản phẩm</label>
               <input v-model.trim="keyword" class="form-control mb-2" placeholder="Tìm theo tên sản phẩm..." />
               <select v-model="selectedProductId" class="form-select" @change="onPickProduct">
@@ -116,20 +159,21 @@
               </select>
             </div>
 
-            <div class="col-12 col-lg-8" v-if="product">
+            <div v-if="product" class="col-12">
               <div class="d-flex gap-3 align-items-start mb-3">
                 <div class="thumb">
                   <img v-if="productThumb" :src="productThumb" alt="thumb" />
                   <div v-else class="thumb-placeholder"><i class="fa-solid fa-image"></i></div>
                 </div>
-                <div>
+                <div class="flex-grow-1">
                   <div class="fw-semibold">{{ product.name }}</div>
                   <div class="small text-muted">Danh mục: {{ product?.category?.name || "-" }}</div>
+                  <div class="small text-muted">Tổng tồn có thể mua: {{ product?.stock_quantity ?? 0 }}</div>
                 </div>
               </div>
 
               <div class="fw-semibold">Bảng giá theo số lượng</div>
-              <div class="small text-muted">Mỗi dòng là số lượng tối thiểu + giá theo từng cấp.</div>
+              <div class="small text-muted">Mỗi dòng là số lượng tối thiểu và giá theo từng cấp.</div>
 
               <div v-if="!priceRows.length" class="small text-muted mt-2">Sản phẩm này chưa có bảng giá.</div>
               <div v-else class="row g-2 mt-2">
@@ -167,6 +211,7 @@ import cartService from "@/services/cart.service";
 import priceQuotationService from "@/services/price-quotation.service";
 import tierService from "@/services/tier.service";
 import ProductService from "@/services/product.service";
+import * as XLSX from "xlsx";
 
 const cartCount = ref(0);
 const user = ref({ name: "Guest", avatar: "/default-user-avatar.svg", tier_id: null, profile: null });
@@ -184,18 +229,30 @@ const selectedProductId = ref("");
 
 const purchaseFileRef = ref(null);
 const purchaseRows = ref([]);
-const selectedFileTierId = ref("");
+const validationSummary = ref(null);
+const downloadError = ref("");
+const addingToCart = ref(false);
 
 const productThumb = computed(() => product.value?.images?.[0]?.url || "");
 const uploadGrandTotal = computed(() =>
-  (purchaseRows.value || []).reduce((sum, r) => sum + Number(r.line_total || 0), 0),
+  (purchaseRows.value || [])
+    .filter((row) => row?.is_valid)
+    .reduce((sum, row) => sum + Number(row.line_total || 0), 0),
 );
+const hasValidRows = computed(() => (purchaseRows.value || []).length > 0 && (purchaseRows.value || []).every((r) => r?.is_valid));
+// const hasValidRows = computed(() => (purchaseRows.value || []).some((r) => r?.is_valid));
 
 const filteredProducts = computed(() => {
   const kw = keyword.value.toLowerCase().trim();
   if (!kw) return products.value || [];
   return (products.value || []).filter((p) => String(p?.name || "").toLowerCase().includes(kw));
 });
+
+const ID_HEADERS = ["product_id", "id", "ma_sp", "ma_san_pham"];
+const NAME_HEADERS = ["product_name", "name", "ten_sp", "ten_san_pham", "product"];
+const COLOR_HEADERS = ["color_option", "color", "mau", "mau_sac"];
+const UNIT_HEADERS = ["unit", "don_vi"];
+const QTY_HEADERS = ["quantity", "qty", "so_luong", "min_quantity"];
 
 function formatVnd(n) {
   return new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(Number(n || 0));
@@ -222,24 +279,11 @@ function normalizePricesToRows(prices = []) {
     }));
 }
 
-function resolveUnitPriceByTierAndQty(prices = [], tierId, qty = 1) {
-  const rows = (prices || [])
-    .filter((p) => String(p?.tier_id || "") === String(tierId || ""))
-    .sort((a, b) => Number(a?.min_quantity || 0) - Number(b?.min_quantity || 0));
-
-  if (!rows.length) return 0;
-  let picked = rows[0];
-  for (const row of rows) {
-    if (Number(row?.min_quantity || 0) <= Number(qty || 1)) picked = row;
-  }
-  return Number(picked?.price || 0);
-}
-
-function pickDownloadFilename(headers = {}, fallback = "bao-gia-customer.csv") {
+function pickDownloadFilename(headers = {}, fallback = "bao-gia-customer.xlsx") {
   const cd = headers?.["content-disposition"] || headers?.["Content-Disposition"] || "";
   const utf8 = cd.match(/filename\*=UTF-8''([^;]+)/i);
   if (utf8?.[1]) return decodeURIComponent(utf8[1]);
-  const plain = cd.match(/filename="?([^"]+)"?/i);
+  const plain = cd.match(/filename=\"?([^\"]+)\"?/i);
   return plain?.[1] || fallback;
 }
 
@@ -287,12 +331,6 @@ async function loadLookupData() {
 
     tiers.value = tierRes?.data?.items ?? tierRes?.data ?? tierRes ?? [];
     products.value = productRes?.items ?? [];
-
-    if (!selectedFileTierId.value) {
-      const meTierId = String(user.value?.tier_id || "");
-      const foundMeTier = (tiers.value || []).some((t) => String(t.id) === meTierId);
-      selectedFileTierId.value = foundMeTier ? meTierId : String(tiers.value?.[0]?.id || "");
-    }
   } catch (e) {
     const msg = e?.response?.data?.message || "Không thể tải dữ liệu tra cứu giá.";
     await Swal.fire("Lỗi", msg, "error");
@@ -311,9 +349,9 @@ async function onPickProduct() {
 
   try {
     const res = await ProductService.getCustomerProductDetail(id, { status: "actived" });
-    const p = res?.data?.product || null;
-    product.value = p;
-    priceRows.value = normalizePricesToRows(p?.prices || []);
+    const nextProduct = res?.data?.product || null;
+    product.value = nextProduct;
+    priceRows.value = normalizePricesToRows(nextProduct?.prices || []);
   } catch (e) {
     const msg = e?.response?.data?.message || "Không thể tải bảng giá của sản phẩm.";
     await Swal.fire("Lỗi", msg, "error");
@@ -322,107 +360,75 @@ async function onPickProduct() {
 
 async function downloadMyQuotation() {
   downloading.value = true;
+  downloadError.value = "";
   try {
-    const res = await priceQuotationService.downloadMyExport();
-    const blob = new Blob([res.data], { type: "text/csv;charset=utf-8;" });
-    const fileName = pickDownloadFilename(res.headers, "bao-gia-customer.csv");
+    const token = localStorage.getItem("access_token");
+    if (!token) {
+      const msg = "Vui lòng đăng nhập để tải file báo giá.";
+      downloadError.value = msg;
+      await Swal.fire("Cần đăng nhập", msg, "warning");
+      return;
+    }
+
+    const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/price-quotations/my-export`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      },
+      credentials: "include",
+    });
+
+    if (!res.ok) {
+      let errMsg = "Không thể xuất báo giá.";
+      try {
+        const asJson = await res.clone().json();
+        errMsg = asJson?.message || asJson?.error || errMsg;
+      } catch {
+        try {
+          errMsg = await res.text();
+        } catch {}
+      }
+      downloadError.value = errMsg;
+      await Swal.fire("Lỗi", errMsg, "error");
+      return;
+    }
+
+    const blob = await res.blob();
+    const headersObj = {};
+    res.headers.forEach((v, k) => {
+      headersObj[k] = v;
+    });
+    const fileName = pickDownloadFilename(headersObj, "bao-gia-customer.xlsx");
 
     const url = window.URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = fileName;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = fileName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
     window.URL.revokeObjectURL(url);
   } catch (e) {
-    const blobMsg = e?.response?.data instanceof Blob ? await extractBlobErrorMessage(e.response.data) : "";
-    const msg = blobMsg || e?.response?.data?.message || "Không thể xuất báo giá.";
+    const msg = e?.message || "Không thể xuất báo giá.";
+    downloadError.value = msg;
+    console.error("downloadMyQuotation error", e);
     await Swal.fire("Lỗi", msg, "error");
   } finally {
     downloading.value = false;
   }
 }
 
-function splitLineWithDelimiter(line, delimiter) {
-  const out = [];
-  let current = "";
-  let inQuotes = false;
-
-  for (let i = 0; i < line.length; i += 1) {
-    const ch = line[i];
-    if (ch === '"') {
-      inQuotes = !inQuotes;
-      continue;
-    }
-    if (ch === delimiter && !inQuotes) {
-      out.push(current.trim());
-      current = "";
-      continue;
-    }
-    current += ch;
-  }
-
-  out.push(current.trim());
-  return out;
+function stripAccents(text = "") {
+  return text
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "d");
 }
 
-function detectDelimiter(lines) {
-  const candidates = [",", ";", "\t"];
-  let best = ",";
-  let bestScore = -1;
-
-  for (const c of candidates) {
-    const parts = splitLineWithDelimiter(lines[0] || "", c).length;
-    if (parts > bestScore) {
-      bestScore = parts;
-      best = c;
-    }
-  }
-
-  return best;
-}
-
-function normalizeHeader(h) {
-  return String(h || "").trim().toLowerCase().replace(/\s+/g, "_");
-}
-
-function parsePurchaseCsv(text) {
-  const lines = String(text || "")
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter(Boolean);
-
-  if (!lines.length) return [];
-
-  const delimiter = detectDelimiter(lines);
-  const headers = splitLineWithDelimiter(lines[0], delimiter).map(normalizeHeader);
-
-  const idIdx = headers.findIndex((h) => ["product_id", "id", "ma_sp", "ma_san_pham"].includes(h));
-  const nameIdx = headers.findIndex((h) => ["product_name", "name", "ten_sp", "ten_san_pham", "product"].includes(h));
-  const qtyIdx = headers.findIndex((h) => ["quantity", "qty", "so_luong"].includes(h));
-
-  if (qtyIdx < 0 || (idIdx < 0 && nameIdx < 0)) return [];
-
-  const rows = [];
-  for (let i = 1; i < lines.length; i += 1) {
-    const cols = splitLineWithDelimiter(lines[i], delimiter);
-    const quantity = Math.max(0, Number(cols[qtyIdx] || 0));
-    if (!quantity) continue;
-
-    rows.push({
-      row_no: i,
-      product_id: idIdx >= 0 ? Number(cols[idIdx] || 0) || null : null,
-      product_name: nameIdx >= 0 ? String(cols[nameIdx] || "").trim() : "",
-      quantity,
-      unit_price: 0,
-      line_total: 0,
-      matched: false,
-      matched_product_id: null,
-    });
-  }
-
-  return rows;
+function normalizeHeader(header) {
+  return stripAccents(String(header || "").trim().toLowerCase()).replace(/\s+/g, "_");
 }
 
 async function onPurchaseFileChange(event) {
@@ -430,82 +436,125 @@ async function onPurchaseFileChange(event) {
   if (!file) return;
 
   try {
-    const text = await file.text();
-    const parsed = parsePurchaseCsv(text);
+    const ext = String(file.name || "").toLowerCase();
+    if (!ext.endsWith(".xlsx") && !ext.endsWith(".xls")) {
+      await Swal.fire("Sai định dạng", "Chỉ hỗ trợ file Excel (.xlsx, .xls).", "warning");
+      if (event?.target) event.target.value = "";
+      purchaseRows.value = [];
+      validationSummary.value = null;
+      return;
+    }
+
+    const buffer = await file.arrayBuffer();
+    const parsed = parsePurchaseXlsx(buffer);
 
     if (!parsed.length) {
       await Swal.fire(
         "Không đọc được file",
-        "Vui lòng dùng file CSV với cột product_id/product_name và quantity.",
+        "Vui lòng dùng file Excel với cột product_id/product_name, color_option, unit và min_quantity hoặc quantity.",
         "warning",
       );
       purchaseRows.value = [];
+      validationSummary.value = null;
       return;
     }
 
     purchaseRows.value = parsed;
+    await validatePurchaseFileRows();
   } catch {
     await Swal.fire("Lỗi", "Không thể đọc file đã chọn.", "error");
     purchaseRows.value = [];
+    validationSummary.value = null;
     if (event?.target) event.target.value = "";
   }
 }
 
-function findProductByRow(row) {
-  if (row.product_id) {
-    const byId = (products.value || []).find((p) => Number(p?.id) === Number(row.product_id));
-    if (byId) return byId;
+function pickFirst(keys, normalizedMap) {
+  for (const key of keys) {
+    if (normalizedMap.has(key)) {
+      const val = normalizedMap.get(key);
+      if (val !== undefined && String(val).trim() !== "") return val;
+    }
+  }
+  return undefined;
+}
+
+function mapRowFromRecord(record, rowNo = 1) {
+  const normalized = new Map();
+  for (const [rawKey, value] of Object.entries(record)) {
+    normalized.set(normalizeHeader(rawKey), value);
   }
 
-  const nameNeedle = String(row.product_name || "").trim().toLowerCase();
-  if (!nameNeedle) return null;
-  return (products.value || []).find((p) => String(p?.name || "").trim().toLowerCase() === nameNeedle) || null;
+  const productIdRaw = pickFirst(ID_HEADERS, normalized);
+  const productName = String(pickFirst(NAME_HEADERS, normalized) || "").trim();
+  const colorOption = String(pickFirst(COLOR_HEADERS, normalized) || "").trim();
+  const unit = String(pickFirst(UNIT_HEADERS, normalized) || "").trim();
+  const quantityRaw = pickFirst(QTY_HEADERS, normalized);
+  const quantity = Number(quantityRaw ?? 0);
+
+  if (!productIdRaw && !productName && !quantityRaw) return null;
+
+  return {
+    row_no: rowNo,
+    product_id: productIdRaw ? Number(productIdRaw) || null : null,
+    product_name: productName,
+    color_option: colorOption,
+    unit,
+    min_quantity: Number.isFinite(quantity) ? quantity : 0,
+    quantity: Number.isFinite(quantity) ? quantity : 0,
+    unit_price: 0,
+    line_total: 0,
+    available_stock: null,
+    is_valid: false,
+    errors: [],
+    warnings: [],
+    matched_product_id: null,
+  };
 }
 
-async function getProductDetailCached(productId) {
-  const res = await ProductService.getCustomerProductDetail(Number(productId), { status: "actived" });
-  return res?.data?.product || null;
+function parsePurchaseXlsx(arrayBuffer) {
+  const workbook = XLSX.read(arrayBuffer, { type: "array" });
+  const sheetName = workbook.SheetNames[0];
+  if (!sheetName) return [];
+  const ws = workbook.Sheets[sheetName];
+  const records = XLSX.utils.sheet_to_json(ws, { defval: "" });
+  const parsed = [];
+  records.forEach((rec, idx) => {
+    const mapped = mapRowFromRecord(rec, idx + 2); // header is row 1
+    if (mapped) parsed.push(mapped);
+  });
+  return parsed;
 }
 
-async function calculatePriceFromFile() {
+async function validatePurchaseFileRows() {
   if (!purchaseRows.value.length) return;
-
-  if (!selectedFileTierId.value) {
-    await Swal.fire("Thiếu tier", "Vui lòng chọn tier để tính giá cho file.", "warning");
-    return;
-  }
 
   calculatingFilePrice.value = true;
   try {
-    const nextRows = [];
-    for (const row of purchaseRows.value) {
-      const matchedBase = findProductByRow(row);
-      if (!matchedBase) {
-        nextRows.push({ ...row, unit_price: 0, line_total: 0, matched: false, matched_product_id: null });
-        continue;
-      }
+    const res = await priceQuotationService.validatePurchaseFile(
+      purchaseRows.value.map((row) => ({
+        row_no: row.row_no,
+        product_id: row.product_id,
+        product_name: row.product_name,
+        color_option: row.color_option,
+        unit: row.unit,
+        min_quantity: row.min_quantity ?? row.quantity,
+      })),
+    );
 
-      const detail = await getProductDetailCached(matchedBase.id);
-      const unitPrice = resolveUnitPriceByTierAndQty(
-        detail?.prices || [],
-        selectedFileTierId.value,
-        Number(row.quantity || 1),
-      );
+    purchaseRows.value = res?.data?.rows || [];
+    validationSummary.value = res?.data?.summary || null;
 
-      nextRows.push({
-        ...row,
-        product_name: row.product_name || matchedBase?.name || "",
-        product_id: row.product_id || matchedBase?.id || null,
-        unit_price: unitPrice,
-        line_total: Number(unitPrice || 0) * Number(row.quantity || 0),
-        matched: true,
-        matched_product_id: Number(matchedBase.id || 0),
-      });
-    }
-
-    purchaseRows.value = nextRows;
+    const invalidRows = Number(validationSummary.value?.invalid_rows || 0);
+    await Swal.fire(
+      invalidRows > 0 ? "File có dòng chưa hợp lệ" : "File hợp lệ",
+      invalidRows > 0
+        ? `Có ${invalidRows} dòng cần sửa trước khi mua hàng.`
+        : "Tất cả dòng đều đã được kiểm tra thành công.",
+      invalidRows > 0 ? "warning" : "success",
+    );
   } catch (e) {
-    const msg = e?.response?.data?.message || "Không thể tính giá từ file.";
+    const msg = e?.response?.data?.message || "Không thể kiểm tra file mua hàng.";
     await Swal.fire("Lỗi", msg, "error");
   } finally {
     calculatingFilePrice.value = false;
@@ -514,7 +563,50 @@ async function calculatePriceFromFile() {
 
 function clearPurchaseRows() {
   purchaseRows.value = [];
+  validationSummary.value = null;
   if (purchaseFileRef.value) purchaseFileRef.value.value = "";
+}
+
+async function addValidRowsToCart() {
+  const rows = (purchaseRows.value || []).filter((r) => r?.is_valid);
+  if (!rows.length) {
+    await Swal.fire("Chưa có dòng hợp lệ", "Hãy kiểm tra lại file trước khi đặt hàng.", "warning");
+    return;
+  }
+
+  addingToCart.value = true;
+  let success = 0;
+  let failed = 0;
+  let failMsg = "";
+  try {
+    for (const row of rows) {
+      const pid = Number(row.matched_product_id || row.product_id || 0);
+      const colorId =
+        row.matched_color_id !== undefined && row.matched_color_id !== null
+          ? Number(row.matched_color_id)
+          : null;
+      const qty = Number(row.quantity || row.min_quantity || 0) || 1;
+      if (!pid) {
+        failed++;
+        continue;
+      }
+      try {
+        await cartService.addItem({ product_id: pid, color_id: colorId, quantity: qty });
+        success++;
+      } catch (e) {
+        failed++;
+        if (!failMsg && e?.response?.data?.message) failMsg = e.response.data.message;
+      }
+    }
+    await loadCartCount();
+    await Swal.fire(
+      "Đặt hàng",
+      `Thêm vào giỏ: ${success} dòng thành công${failed ? `, ${failed} dòng lỗi${failMsg ? `: ${failMsg}` : ""}` : ""}`,
+      failed ? "warning" : "success",
+    );
+  } finally {
+    addingToCart.value = false;
+  }
 }
 
 onMounted(async () => {
@@ -575,5 +667,30 @@ onMounted(async () => {
   background: var(--hover-background-color);
   color: var(--font-color);
   border: 1px solid var(--border-color);
+}
+
+.summary-card {
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 12px;
+  background: #fff;
+}
+
+.summary-valid {
+  background: #f1fff5;
+}
+
+.summary-invalid {
+  background: #fff5f5;
+}
+
+.summary-label {
+  color: var(--font-extra-color);
+  font-size: 0.85rem;
+}
+
+.summary-value {
+  font-size: 1.35rem;
+  font-weight: 800;
 }
 </style>

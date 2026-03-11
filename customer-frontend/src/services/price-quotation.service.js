@@ -10,6 +10,10 @@ class PriceQuotationService {
       responseType: "blob",
     });
   }
+
+  async validatePurchaseFile(rows = []) {
+    return (await this.api.post("/validate-purchase-file", { rows })).data;
+  }
 }
 
 export default new PriceQuotationService();
