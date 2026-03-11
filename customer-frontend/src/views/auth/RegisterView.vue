@@ -1,15 +1,21 @@
 <template>
-  <div class="min-vh-100 d-flex align-items-center bg-light">
+  <div class="min-vh-100 d-flex align-items-center register-page">
     <div class="container mt-4 mb-4">
       <div class="row justify-content-center">
         <div class="col-12 col-lg-7">
-          <div class="card shadow-sm border-0">
+          <div class="card shadow-sm register-card">
             <div class="card-body p-4">
-              <h1 class="h4 mb-2 text-center">Đăng ký tài khoản</h1>
-              <p class="text-muted mb-4 text-center">
+              <div class="text-center">
+                <span class="register-header-badge"> Đăng ký tài khoản </span>
+              </div>
+
+              <p class="subtext mb-4 text-center">
                 Tạo tài khoản để mua sắm nhanh hơn.
               </p>
 
+              <div v-if="serverError" class="alert alert-danger mt-3 mb-0">
+                {{ serverError }}
+              </div>
               <Form
                 :validation-schema="schema"
                 @submit="onSubmit"
@@ -35,11 +41,19 @@
                   icon="fa-solid fa-phone"
                 />
 
+                <AppField
+                  name="name"
+                  label="Họ tên"
+                  placeholder="Trần Thanh Phúc"
+                  autocomplete="name"
+                  icon="fa-solid fa-id-card"
+                />
+
                 <!-- 3) Username -->
                 <AppField
                   name="username"
                   label="Username"
-                  placeholder="stationery_01"
+                  placeholder="tranthanhphuc123"
                   autocomplete="username"
                   icon="fa-solid fa-user"
                   hint="6–30 ký tự, chỉ chữ và số"
@@ -124,23 +138,23 @@
                   </div>
                 </div>
 
-                <!-- 5) Ngày sinh + Giới tính (giới tính nằm dưới, full width) -->
+                <!-- 5) Ngày sinh + Giới tính  -->
                 <div class="mb-3">
-                  <label class="form-label" for="dob">Ngày sinh</label>
+                  <label class="form-label" for="birthday">Ngày sinh</label>
                   <div class="input-group">
                     <span class="input-group-text"
                       ><i class="fa-solid fa-cake-candles"></i
                     ></span>
                     <Field
-                      id="dob"
-                      name="dob"
+                      id="birthday"
+                      name="birthday"
                       type="date"
                       class="form-control"
-                      :class="{ 'is-invalid': errors.dob }"
+                      :class="{ 'is-invalid': errors.birthday }"
                     />
                   </div>
-                  <div v-if="errors.dob" class="invalid-feedback d-block">
-                    {{ errors.dob }}
+                  <div v-if="errors.birthday" class="invalid-feedback d-block">
+                    {{ errors.birthday }}
                   </div>
                 </div>
 
@@ -193,7 +207,7 @@
                 </div>
 
                 <button
-                  class="btn btn-success w-100"
+                  class="btn btn-main w-100"
                   type="submit"
                   :disabled="isSubmitting"
                 >
@@ -208,10 +222,6 @@
                   >
                 </div>
               </Form>
-
-              <div v-if="serverError" class="alert alert-danger mt-3 mb-0">
-                {{ serverError }}
-              </div>
             </div>
           </div>
 
@@ -230,13 +240,18 @@ import { ref } from "vue";
 import { Form, Field } from "vee-validate";
 import * as yup from "yup";
 import AppField from "@/components/form/AppField.vue";
+import authService from "@/services/auth.service";
+import { useRouter } from "vue-router";
+import Swal from "sweetalert2";
 
+const router = useRouter();
 const showPassword = ref(false);
 const showConfirm = ref(false);
 const serverError = ref("");
 
 const phoneRegex = /^(0|\+84)(3|5|7|8|9)\d{8}$/;
 const usernameRegex = /^[A-Za-z][A-Za-z0-9]{5,29}$/;
+const nameRegex = /^[A-Za-zÀ-ỹ\s]+$/;
 
 const schema = yup.object({
   email: yup
@@ -247,6 +262,11 @@ const schema = yup.object({
     .string()
     .required("Vui lòng nhập số điện thoại")
     .matches(phoneRegex, "Số điện thoại không hợp lệ"),
+  name: yup
+    .string()
+    .trim()
+    .required("Vui lòng nhập họ và tên")
+    .matches(nameRegex, "Họ và tên chỉ được chứa chữ và khoảng trắng"),
   username: yup
     .string()
     .required("Vui lòng nhập username")
@@ -262,7 +282,7 @@ const schema = yup.object({
     .string()
     .required("Vui lòng nhập lại mật khẩu")
     .oneOf([yup.ref("password")], "Mật khẩu nhập lại không khớp"),
-  dob: yup
+  birthday: yup
     .date()
     .typeError("Ngày sinh không hợp lệ")
     .required("Vui lòng chọn ngày sinh")
@@ -274,15 +294,104 @@ const schema = yup.object({
   agree: yup.boolean().oneOf([true], "Bạn cần đồng ý điều khoản để tiếp tục"),
 });
 
-async function onSubmit(values, { setSubmitting }) {
+async function onSubmit(values, actions) {
   serverError.value = "";
   try {
-    // TODO: call API Laravel register
-    console.log("REGISTER", values);
+    const res = await authService.register(values);
+    await Swal.fire(
+      "Thành công!",
+      "Đăng ký thành công! Vui lòng đăng nhập",
+      "success"
+    );
+    router.push("/login");
   } catch (e) {
-    serverError.value = "Đăng ký thất bại. Vui lòng thử lại.";
-  } finally {
-    setSubmitting(false);
+    serverError.value =
+      e?.response?.data?.message || "Đăng ký thất bại. Vui lòng thử lại.";
+
+    const errors = e?.response?.data?.errors;
+    const mapped = Object.fromEntries(
+      Object.entries(errors).map(([field, messages]) => [
+        field,
+        Array.isArray(messages) ? messages[0] : String(messages),
+      ])
+    );
+    actions.setErrors(mapped);
+    Swal.fire("Lỗi", e.response?.data?.message || "Đăng ký thất bại", "error");
+    console.log("Register error:", e);
   }
 }
 </script>
+
+<style scoped>
+.register-page {
+  background: var(--main-bg);
+}
+
+.register-card {
+  border-radius: 18px;
+  border: 1px solid var(--hover-border-color);
+  background: var(--main-extra-bg);
+}
+
+.register-header-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.75rem;
+  font-weight: 700;
+  font-size: 1.5rem;
+}
+
+.subtext {
+  color: var(--font-extra-color) !important;
+}
+
+.btn-main {
+  background: var(--main-color);
+  border: 1px solid var(--hover-border-color);
+  color: var(--dark);
+  font-weight: 800;
+  border-radius: 14px;
+  padding: 0.75rem 1rem;
+}
+
+.btn-main:hover {
+  border-color: var(--hover-border-color);
+}
+
+.card-body :deep(.input-group-text) {
+  background: var(--main-extra-bg);
+  border-color: var(--border-color);
+}
+
+.card-body :deep(.form-control) {
+  background: var(--main-extra-bg);
+  border-color: var(--border-color);
+  color: var(--font-color);
+}
+
+.card-body :deep(.form-control:focus) {
+  box-shadow: 0 0 0 0.2rem rgba(242, 196, 149, 0.35);
+  border-color: var(--hover-border-color);
+}
+
+.card-body :deep(.invalid-feedback) {
+  font-size: 0.9rem;
+}
+
+.card-body :deep(.form-control.is-invalid),
+.card-body :deep(.form-select.is-invalid),
+.card-body :deep(.form-check-input.is-invalid) {
+  border-color: var(--bs-danger) !important;
+}
+
+.card-body :deep(.form-control.is-invalid:focus),
+.card-body :deep(.form-select.is-invalid:focus),
+.card-body :deep(.form-check-input.is-invalid:focus) {
+  box-shadow: 0 0 0 0.2rem rgba(220, 53, 69, 0.25) !important; /* đỏ nhạt */
+}
+
+.card-body :deep(.input-group .form-control.is-invalid) {
+  z-index: 3; /* tránh bị che viền */
+}
+</style>
