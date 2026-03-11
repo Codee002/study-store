@@ -1,54 +1,63 @@
 <template>
   <div class="card product-card h-100 shadow-sm border-0">
-    <div class="thumb">
+    <RouterLink :to="`/products/${product.id}`" class="thumb">
       <img :src="product.image" class="w-100 h-100" :alt="product.name" />
-      <span v-if="product.badge" class="badge badge-top">{{
-        product.badge
-      }}</span>
-    </div>
+      <span v-if="product.badge" class="badge badge-top">{{ product.badge }}</span>
+    </RouterLink>
 
     <div class="card-body">
-      <div class="d-flex justify-content-between align-items-start gap-2">
-        <h6 class="mb-1 fw-bold">{{ product.name }}</h6>
-        <button class="btn btn-sm btn-like" type="button" title="Yêu thích">
-          <i class="fa-regular fa-heart"></i>
-        </button>
+      <div class="mb-1">
+        <RouterLink :to="`/products/${product.id}`" class="product-link">
+          <h6 class="mb-1 fw-bold product-name">{{ product.name }}</h6>
+        </RouterLink>
       </div>
 
       <div class="text-muted small mb-2">{{ product.category }}</div>
 
       <div class="d-flex align-items-center gap-2 mb-2">
-        <div class="rating">
-          <i class="fa-solid fa-star"></i> {{ product.rating }}
-          <span class="text-muted">({{ product.sold }}+)</span>
-        </div>
+        <div class="rating"><i class="fa-solid fa-star"></i> {{ product.rating }} <span class="text-muted">({{ product.sold }}+)</span></div>
       </div>
 
-      <div class="d-flex align-items-center justify-content-between">
+      <div class="d-flex align-items-center justify-content-between gap-2">
         <div>
           <div class="price">{{ formatVnd(product.price) }}</div>
-          <div v-if="product.oldPrice" class="old-price">
-            {{ formatVnd(product.oldPrice) }}
-          </div>
+          <div v-if="product.oldPrice != null" class="old-price">{{ formatVnd(product.oldPrice) }}</div>
         </div>
-        <button class="btn btn-sm btn-main" type="button">
-          <i class="fa-solid fa-cart-plus me-1"></i>Thêm
-        </button>
+        <div class="d-flex align-items-center gap-2">
+          <RouterLink
+            v-if="showDetailButton"
+            :to="`/products/${product.id}`"
+            class="btn btn-sm btn-outline-main"
+          >
+            Chi tiết
+          </RouterLink>
+          <button class="btn btn-sm btn-outline-main" type="button" @click="emit('add-to-cart', product)">
+            <i class="fa-solid fa-cart-plus me-1"></i>{{ addToCartLabel }}
+          </button>
+          <button class="btn btn-sm btn-main" type="button" @click="emit('buy-now', product)">
+            <i class="fa-solid fa-bag-shopping me-1"></i>{{ buyNowLabel }}
+          </button>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-const props = defineProps({
+const emit = defineEmits(["add-to-cart", "buy-now"]);
+
+defineProps({
   product: { type: Object, required: true },
+  showDetailButton: { type: Boolean, default: true },
+  addToCartLabel: { type: String, default: "Thêm giỏ" },
+  buyNowLabel: { type: String, default: "Đặt hàng" },
 });
 
 function formatVnd(n) {
   return new Intl.NumberFormat("vi-VN", {
     style: "currency",
     currency: "VND",
-  }).format(n);
+  }).format(n || 0);
 }
 </script>
 
@@ -64,6 +73,7 @@ function formatVnd(n) {
   overflow: hidden;
   position: relative;
   background: var(--extra-bg);
+  display: block;
 }
 .thumb img {
   object-fit: cover;
@@ -76,13 +86,18 @@ function formatVnd(n) {
   color: var(--dark);
   border: 1px solid var(--hover-border-color);
 }
-.btn-like {
-  border-radius: 12px;
-  border: 1px solid var(--border-color);
-  background: var(--main-extra-bg);
+.product-link {
+  text-decoration: none;
+  color: inherit;
 }
-.btn-like:hover {
-  background: var(--hover-color);
+.product-name {
+  min-height: 2.6em;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .price {
@@ -96,7 +111,7 @@ function formatVnd(n) {
 }
 .rating i {
   color: #f4b400;
-} /* sao vàng nhẹ, nếu bạn muốn tuyệt đối không set màu thì bỏ dòng này */
+}
 .btn-main {
   background: var(--main-color);
   border: 1px solid var(--hover-border-color);
@@ -105,5 +120,15 @@ function formatVnd(n) {
 }
 .btn-main:hover {
   filter: var(--brightness);
+}
+.btn-outline-main {
+  border: 1px solid var(--border-color);
+  color: var(--font-color);
+  background: transparent;
+  font-weight: 600;
+}
+.btn-outline-main:hover {
+  background: var(--hover-background-color);
+  border-color: var(--hover-border-color);
 }
 </style>

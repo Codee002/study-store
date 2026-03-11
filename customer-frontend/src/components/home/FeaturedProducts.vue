@@ -5,9 +5,6 @@
     >
       <div>
         <h3 class="h5 fw-bold mb-1">Sản phẩm nổi bật</h3>
-        <div class="text-muted small">
-          Mock data — sau này thay bằng API backend.
-        </div>
       </div>
 
       <div class="d-flex flex-wrap gap-2">
@@ -25,7 +22,12 @@
 
     <div class="row g-3">
       <div v-for="p in products" :key="p.id" class="col-12 col-sm-6 col-lg-3">
-        <ProductCard :product="p" />
+        <ProductCard
+          :product="p"
+          :show-detail-button="false"
+          @add-to-cart="$emit('add-to-cart', $event)"
+          @buy-now="$emit('buy-now', $event)"
+        />
       </div>
     </div>
   </section>
@@ -40,7 +42,7 @@ defineProps({
   activeCategory: { type: String, default: "Tất cả" },
 });
 
-defineEmits(["change-category"]);
+defineEmits(["change-category", "add-to-cart", "buy-now"]);
 </script>
 
 <style scoped>

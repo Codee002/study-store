@@ -28,13 +28,13 @@
           <h6 class="fw-bold mb-3">Liên hệ</h6>
           <ul class="list-unstyled text-muted mb-0">
             <li class="mb-2">
-              <i class="fa-solid fa-location-dot me-2"></i>TP.HCM, Việt Nam
+              <i class="fa-solid fa-location-dot me-2"></i>Đại học Cần Thơ, Việt Nam
             </li>
             <li class="mb-2">
-              <i class="fa-solid fa-phone me-2"></i>0900 000 000
+              <i class="fa-solid fa-phone me-2"></i>0918 242 085
             </li>
             <li class="mb-2">
-              <i class="fa-solid fa-envelope me-2"></i>support@studystore.vn
+              <i class="fa-solid fa-envelope me-2"></i>phucb2205955@student.ctu.edu.vn
             </li>
             <li class="mb-2">
               <i class="fa-solid fa-clock me-2"></i>8:00 - 22:00 (T2 - CN)
@@ -49,7 +49,7 @@
               ><i class="fa-solid fa-circle-info me-2"></i>Giới thiệu</a
             >
             <a class="footer-link" href="#"
-              ><i class="fa-solid fa-truck-fast me-2"></i>Giao hàng (GHN)</a
+              ><i class="fa-solid fa-truck-fast me-2"></i>Giao hàng</a
             >
             <a class="footer-link" href="#"
               ><i class="fa-solid fa-shield me-2"></i>Chính sách</a

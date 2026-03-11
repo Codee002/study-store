@@ -28,8 +28,8 @@
           <div class="mini-card">
             <i class="fa-solid fa-truck-fast"></i>
             <div>
-              <div class="fw-bold">Giao nhanh</div>
-              <div class="text-muted small">Tích hợp GHN (sắp có)</div>
+              <div class="fw-bold">T</div>
+              <div class="text-muted small">T</div>
             </div>
           </div>
         </div>
@@ -37,8 +37,8 @@
           <div class="mini-card">
             <i class="fa-solid fa-tags"></i>
             <div>
-              <div class="fw-bold">Giá theo tier</div>
-              <div class="text-muted small">Retail / Dealer</div>
+              <div class="fw-bold">T</div>
+              <div class="text-muted small">T</div>
             </div>
           </div>
         </div>
@@ -46,8 +46,8 @@
           <div class="mini-card">
             <i class="fa-solid fa-shield"></i>
             <div>
-              <div class="fw-bold">Đổi trả dễ</div>
-              <div class="text-muted small">Hỗ trợ trong 7 ngày</div>
+              <div class="fw-bold">T</div>
+              <div class="text-muted small">T</div>
             </div>
           </div>
         </div>
@@ -57,7 +57,6 @@
 </template>
 
 <script setup>
-// bạn đặt ảnh tại src/assets/banner.jpg
 import bannerUrl from "@/assets/banner.jpg";
 </script>
 

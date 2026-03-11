@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="mb-3">
     <label v-if="label" class="form-label" :for="name">{{ label }}</label>
 
@@ -55,7 +55,6 @@ const props = defineProps({
   icon: { type: String, default: "fa-solid fa-pen" },
 });
 
-// Hiện lỗi khi người dùng đã chạm field (touched) hoặc sau khi submit fail (submitCount > 0)
 function shouldShowError(meta, errorMessage) {
   return !!errorMessage && (meta.touched || meta.submitCount > 0);
 }
