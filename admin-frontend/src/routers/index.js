@@ -1,4 +1,4 @@
-import { createRouter, createWebHistory } from "vue-router";
+﻿import { createRouter, createWebHistory } from "vue-router";
 import DashboardView from "../views/DashboardView.vue";
 import LoginView from "../views/auth/LoginView.vue";
 import AppLayout from "../components/layout/AppLayout.vue";
@@ -50,6 +50,18 @@ import DiscountListView from "../views/discounts/DiscountListView.vue";
 import DiscountCreateView from "../views/discounts/DiscountCreateView.vue";
 import DiscountEditView from "../views/discounts/DiscountEditView.vue";
 import DiscountDetailView from "../views/discounts/DiscountDetailView.vue";
+
+import UserListView from "../views/users/UserListView.vue";
+
+// Price pages
+import PriceLookupView from "../views/prices/PriceLookupView.vue";
+import PriceEditView from "../views/prices/PriceEditView.vue";
+import OrderListView from "../views/orders/OrderListView.vue";
+import OrderCreateView from "../views/orders/OrderCreateView.vue";
+import OrderDetailView from "../views/orders/OrderDetailView.vue";
+import ProductStatsView from "../views/reports/ProductStatsView.vue";
+import ChatView from "../views/messages/ChatView.vue";
+import ContactListView from "../views/messages/ContactListView.vue";
 
 import AuthService from "@/services/auth.service";
 
@@ -166,6 +178,14 @@ const routes = [
         component: TierDetailView,
         meta: { title: "Chi tiết cấp tài khoản" },
         props: true,
+      },
+
+      // Users
+      {
+        path: "/users",
+        name: "users.list",
+        component: UserListView,
+        meta: { title: "Tài khoản" },
       },
 
       // Products
@@ -302,6 +322,62 @@ const routes = [
         meta: { title: "Chi tiết khuyến mãi" },
         props: true,
       },
+
+      // Prices
+      {
+        path: "/prices/lookup",
+        name: "prices.lookup",
+        component: PriceLookupView,
+        meta: { title: "Tạo giá sản phẩm" },
+      },
+      {
+        path: "/prices/:id/edit",
+        name: "prices.edit",
+        component: PriceEditView,
+        meta: { title: "Chỉnh sửa giá sản phẩm" },
+      },
+      {
+        path: "/orders",
+        name: "orders.list",
+        component: OrderListView,
+        meta: { title: "Đơn hàng" },
+      },
+      {
+        path: "/orders/create",
+        name: "orders.create",
+        component: OrderCreateView,
+        meta: { title: "Tạo đơn hàng" },
+      },
+      {
+        path: "/orders/:id",
+        name: "orders.detail",
+        component: OrderDetailView,
+        meta: { title: "Chi tiết đơn hàng" },
+        props: true,
+      },
+
+      // Reports
+      {
+        path: "/reports/product-stats",
+        name: "reports.product-stats",
+        component: ProductStatsView,
+        meta: { title: "Thống kê sản phẩm" },
+      },
+
+      // Messages
+      {
+        path: "/messages",
+        name: "messages.list",
+        component: ContactListView,
+        meta: { title: "Liên hệ" },
+      },
+      {
+        path: "/messages/:id",
+        name: "messages.chat",
+        component: ChatView,
+        meta: { title: "Trò chuyện" },
+        props: true,
+      },
     ],
   },
 ];
@@ -329,3 +405,4 @@ router.afterEach((to) => {
   document.title = to.meta.title || "Quản lý hệ thống văn phòng phẩm";
 });
 export default router;
+
