@@ -1,0 +1,514 @@
+<template>
+  <div class="row g-3">
+    <!-- Header -->
+    <div class="col-12">
+      <div
+        class="d-flex align-items-start align-items-md-center justify-content-between gap-2 flex-column flex-md-row"
+      >
+        <div>
+          <h4 class="mb-1">Giá bán của sản phẩm</h4>
+          <div class="small opacity-75">
+            Xem và chỉnh sửa các mức giá theo số lượng và cấp
+          </div>
+        </div>
+
+        <div class="d-flex gap-2">
+          <button class="btn btn-outline-secondary" @click="$router.back()">
+            <i class="fa-solid fa-arrow-left me-1"></i> Quay lại
+          </button>
+
+          <button
+            class="btn btn-outline-secondary"
+            type="button"
+            @click="refetch()"
+            :disabled="loading"
+            title="Tải lại"
+          >
+            <i class="fa-solid fa-rotate"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Content -->
+    <div class="col-12">
+      <div class="card card-soft">
+        <div class="card-body">
+          <!-- Loading -->
+          <div v-if="loading" class="py-4 text-center opacity-75">
+            <i class="fa-solid fa-spinner fa-spin me-2"></i> Đang tải dữ liệu...
+          </div>
+
+          <template v-else>
+            <!-- Product summary -->
+            <div class="d-flex gap-3 align-items-center mb-3">
+              <div class="thumb">
+                <img v-if="productThumb" :src="productThumb" alt="thumb" />
+                <div v-else class="thumb-placeholder">
+                  <i class="fa-regular fa-image"></i>
+                </div>
+              </div>
+
+              <div class="flex-grow-1">
+                <div class="fw-semibold fs-5">{{ product?.name || "—" }}</div>
+                <div class="small opacity-75">
+                  Danh mục: {{ product?.category?.name || "—" }}
+                </div>
+                <div class="small opacity-75">
+                  ID: P{{ product?.id || "—" }}
+                </div>
+              </div>
+            </div>
+
+            <!-- Form -->
+            <Form
+              :key="formKey"
+              :initial-values="initialValues"
+              :validation-schema="schema"
+              @submit="onSubmit"
+              v-slot="{ isSubmitting, values, setFieldValue }"
+            >
+              <div
+                class="d-flex align-items-center justify-content-between gap-2"
+              >
+                <div>
+                  <div class="fw-semibold">Bảng giá theo số lượng</div>
+                  <div class="small opacity-75">
+                    Mỗi dòng là một mức <b>số lượng tối thiểu</b>, bắt buộc nhập
+                    đủ giá cho tất cả cấp.
+                  </div>
+                </div>
+
+                <div class="d-flex gap-2">
+                  <button
+                    type="button"
+                    class="btn btn-outline-secondary"
+                    @click="addRow(values, setFieldValue)"
+                    :disabled="isSubmitting"
+                  >
+                    <i class="fa-solid fa-plus me-1"></i> Thêm dòng
+                  </button>
+
+                  <button
+                    class="btn btn-accent"
+                    type="submit"
+                    :disabled="isSubmitting"
+                  >
+                    <i class="fa-solid fa-floppy-disk me-1"></i>
+                    {{ isSubmitting ? "Đang lưu..." : "Lưu thay đổi" }}
+                  </button>
+                </div>
+              </div>
+
+              <FieldArray name="rows" v-slot="{ fields, remove }">
+                <div class="mt-3 d-flex flex-column gap-2">
+                  <div
+                    v-for="(f, rowIdx) in fields"
+                    :key="f.key"
+                    class="row-box"
+                  >
+                    <!-- Row header -->
+                    <div
+                      class="d-flex align-items-center justify-content-between gap-2 mb-2"
+                    >
+                      <div class="fw-semibold">Mức giá #{{ rowIdx + 1 }}</div>
+
+                      <button
+                        type="button"
+                        class="btn btn-outline-danger btn-sm"
+                        title="Xóa dòng"
+                        @click="remove(rowIdx)"
+                        :disabled="isSubmitting || fields.length <= 1"
+                      >
+                        <i class="fa-solid fa-trash"></i>
+                      </button>
+                    </div>
+
+                    <!-- Row inputs: min_quantity  -->
+                    <div class="row g-3">
+                      <div class="col-12 col-md-4">
+                        <label class="form-label">Số lượng tối thiểu</label>
+                        <Field
+                          :name="`rows[${rowIdx}].min_quantity`"
+                          v-slot="{ field, meta, errors, handleChange }"
+                        >
+                          <input
+                            v-bind="field"
+                            type="number"
+                            min="1"
+                            step="1"
+                            inputmode="numeric"
+                            class="form-control bg-transparent"
+                            :class="{
+                              'is-invalid': meta.touched && errors.length,
+                            }"
+                            placeholder="Ví dụ: 1 / 10 / 50..."
+                            @input="handleChange"
+                          />
+                        </Field>
+
+                      
+                        <ErrorMessage
+                          :name="`rows[${rowIdx}].min_quantity`"
+                          class="invalid-feedback d-block"
+                        />
+
+                        <div
+                          v-if="isDupMinQty(values, rowIdx)"
+                          class="small text-danger mt-1"
+                        >
+                          Số lượng tối thiểu bị trùng
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Tier prices (vertical/grid) -->
+                    <div class="mt-3">
+                      <div class="small opacity-75 mb-2">Giá theo cấp</div>
+
+                      <div class="row g-3">
+                        <div
+                          v-for="(t, tierIdx) in tiers"
+                          :key="t.id"
+                          class="col-12 col-md-6 col-xl-4"
+                        >
+                          <div
+                            class="d-flex align-items-center justify-content-between mb-1"
+                          >
+                            <div class="d-flex align-items-center gap-2">
+                              <span class="badge badge-tier">{{ t.code }}</span>
+                              <span class="fw-semibold">{{ t.name }}</span>
+                            </div>
+                          </div>
+
+                          <Field
+                            :name="`rows[${rowIdx}].prices[${tierIdx}].price`"
+                            v-slot="{ field, meta, errors, handleChange }"
+                          >
+                            <input
+                              v-bind="field"
+                              type="number"
+                              min="1"
+                              step="1"
+                              inputmode="numeric"
+                              class="form-control bg-transparent"
+                              :class="{
+                                'is-invalid': meta.touched && errors.length,
+                              }"
+                              placeholder="Nhập giá..."
+                              @input="handleChange"
+                            />
+                          </Field>
+                          <ErrorMessage
+                            :name="`rows[${rowIdx}].prices[${tierIdx}].price`"
+                            class="invalid-feedback d-block"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </FieldArray>
+            </Form>
+          </template>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { computed, onMounted, ref } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { Form, Field, FieldArray, ErrorMessage } from "vee-validate";
+import * as yup from "yup";
+import { formatMoney } from "@/utils/utils";
+import Swal from "sweetalert2";
+import TierService from "@/services/tier.service";
+import ProductService from "@/services/product.service";
+
+const route = useRoute();
+const router = useRouter();
+const productId = route.params.id;
+
+const loading = ref(true);
+const formKey = ref(0);
+
+const product = ref(null);
+const tiers = ref([]);
+
+const initialValues = ref({ rows: [] });
+
+const productThumb = computed(() => product.value?.images?.[0]?.url || "");
+
+/**
+ * row = { min_quantity, prices:[{tier_id, price}] }
+ */
+function buildRow(minQty = 1, existingTierPrices = null) {
+  const prices = tiers.value.map((t) => ({
+    tier_id: String(t.id),
+    price: existingTierPrices?.[String(t.id)] ?? "",
+  }));
+
+  return {
+    _key: crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`,
+    min_quantity: minQty,
+    prices,
+  };
+}
+
+/**
+ * prices = [
+ *  { tier_id, min_quantity, price, }
+ * ]
+ */
+function normalizePricesToRows(prices = []) {
+  const map = new Map(); // minQty -> { tierMap }
+
+  for (const p of prices) {
+    const minq = String(p.min_quantity);
+
+    if (!map.has(minq)) {
+      map.set(minq, {
+        tierMap: {},
+      });
+    }
+
+    const g = map.get(minq);
+    g.tierMap[String(p.tier_id)] = p.price;
+  }
+
+  const rows = Array.from(map.entries())
+    .map(([minq, g]) => buildRow(Number(minq), g.tierMap))
+    .sort((a, b) => Number(a.min_quantity) - Number(b.min_quantity));
+
+  return rows.length ? rows : [buildRow(1)];
+}
+
+const schema = computed(() => {
+  const dateStr = () =>
+    yup
+      .string()
+      .nullable()
+      .transform((v) => (v === "" ? null : v));
+
+  return yup.object({
+    rows: yup
+      .array()
+      .min(1, "Vui lòng tạo ít nhất 1 dòng giá")
+      .test("unique-minqty", "Min quantity bị trùng", function (rows) {
+        if (!Array.isArray(rows)) return false;
+        const seen = new Set();
+        for (const r of rows) {
+          const k = String(r?.min_quantity ?? "");
+          if (!k) continue;
+          if (seen.has(k)) return false;
+          seen.add(k);
+        }
+        return true;
+      })
+      .of(
+        yup.object({
+          min_quantity: yup
+            .number()
+            .typeError("Min quantity phải là số")
+            .integer("Min quantity phải là số nguyên")
+            .min(1, "Min quantity phải >= 1")
+            .required("Vui lòng nhập min_quantity"),
+
+          prices: yup
+            .array()
+            .min(1)
+            .of(
+              yup.object({
+                tier_id: yup.string().required(),
+                price: yup
+                  .number()
+                  .typeError("Giá phải là số")
+                  .moreThan(0, "Giá phải > 0")
+                  .required("Vui lòng nhập giá"),
+              })
+            )
+            .test(
+              "fill-all-tiers",
+              "Vui lòng nhập giá cho tất cả tier",
+              function (arr) {
+                if (!tiers.value.length) return true;
+                if (!Array.isArray(arr)) return false;
+                if (arr.length !== tiers.value.length) return false;
+                return arr.every((x) => Number(x?.price) > 0);
+              }
+            ),
+        })
+      ),
+  });
+});
+
+function getDupMinQtySetFromValues(values) {
+  const rows = values?.rows || [];
+  const count = new Map();
+  for (const r of rows) {
+    const k = String(r?.min_quantity ?? "");
+    if (!k) continue;
+    count.set(k, (count.get(k) || 0) + 1);
+  }
+  const dup = new Set();
+  for (const [k, c] of count.entries()) {
+    if (c > 1) dup.add(k);
+  }
+  return dup;
+}
+
+function isDupMinQty(values, rowIdx) {
+  const k = String(values?.rows?.[rowIdx]?.min_quantity ?? "");
+  if (!k) return false;
+  return getDupMinQtySetFromValues(values).has(k);
+}
+
+function addRow(values, setFieldValue) {
+  const rows = values?.rows || [];
+  const maxMin = rows.reduce(
+    (m, r) => Math.max(m, Number(r?.min_quantity || 0)),
+    0
+  );
+  const next = [...rows, buildRow(maxMin ? maxMin + 1 : 1)];
+  setFieldValue("rows", next);
+}
+
+async function onSubmit(values, { setErrors }) {
+  try {
+    const dup = getDupMinQtySetFromValues(values);
+    if (dup.size) {
+      await Swal.fire(
+        "Lỗi",
+        "Min quantity bị trùng, vui lòng kiểm tra lại.",
+        "error"
+      );
+      return;
+    }
+
+    const payload = {
+      product_id: Number(productId),
+      rows: (values.rows || []).map((r) => ({
+        min_quantity: Number(r.min_quantity),
+        prices: (r.prices || []).map((p) => ({
+          tier_id: Number(p.tier_id),
+          price: Number(p.price),
+        })),
+      })),
+    };
+
+    console.log(payload);
+    const res = await ProductService.saveProductPrices(productId, payload);
+    await Swal.fire("Thành công", res.message, "success");
+  } catch (e) {
+    console.log(e);
+    const status = e?.response?.status;
+    const data = e?.response?.data;
+
+    if (status === 422 && data?.errors) {
+      const mapped = {};
+      Object.keys(data.errors).forEach((k) => {
+        mapped[k] = Array.isArray(data.errors[k])
+          ? data.errors[k][0]
+          : String(data.errors[k]);
+      });
+      setErrors(mapped);
+      return;
+    }
+
+    const msg =
+      data?.message || data?.error || "Lưu giá thất bại. Vui lòng thử lại.";
+    await Swal.fire("Lỗi", msg, "error");
+  }
+}
+
+async function refetch() {
+  loading.value = true;
+  try {
+    const tierRes = await TierService.getAll({ per_page: 200 });
+    tiers.value = tierRes?.data?.items ?? tierRes?.data ?? tierRes ?? [];
+
+    const prRes = await ProductService.get(productId);
+    product.value = prRes?.product ?? prRes;
+
+    const prices = prRes?.product?.prices || [];
+
+    initialValues.value = {
+      rows: normalizePricesToRows(prices),
+    };
+
+    formKey.value += 1;
+  } catch (e) {
+    console.log(e);
+    const msg =
+      e?.response?.data?.message ||
+      e?.response?.data?.error ||
+      "Không thể tải dữ liệu giá. Vui lòng thử lại.";
+    await Swal.fire("Lỗi", msg, "error");
+    router.back();
+  } finally {
+    loading.value = false;
+  }
+}
+
+onMounted(refetch);
+</script>
+
+<style scoped>
+.card-soft {
+  background: var(--main-extra-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 1rem;
+  color: var(--font-color);
+}
+
+.btn-accent {
+  background: var(--main-color);
+  border: 1px solid var(--hover-border-color);
+  color: var(--dark);
+}
+.btn-accent:hover {
+  filter: var(--brightness);
+}
+
+/* product thumb */
+.thumb {
+  width: 8rem;
+  border-radius: 0.6rem;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  background: rgba(255, 255, 255, 0.03);
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.thumb-placeholder {
+  opacity: 0.6;
+  font-size: 1.1rem;
+}
+
+/* tier badge */
+.badge-tier {
+  border-radius: 999px;
+  padding: 0.4rem 0.6rem;
+  background: rgba(255, 166, 0, 0.15);
+  border: 1px solid rgba(255, 166, 0, 0.35);
+  color: #ffa500;
+  font-weight: 700;
+}
+
+/* row card */
+.row-box {
+  border: 1px solid var(--border-color);
+  border-radius: 1rem;
+  padding: 1rem;
+  background: rgba(255, 255, 255, 0.02);
+}
+</style>
