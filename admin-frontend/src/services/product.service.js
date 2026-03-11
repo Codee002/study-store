@@ -24,13 +24,15 @@ class ProductService {
     for (const pair of formData.entries()) {
       console.log(pair[0] + ": ", pair[1]);
     }
-    return (
-      await this.api.post(`/${id}`, formData)
-    ).data;
+    return (await this.api.post(`/${id}`, formData)).data;
   }
 
   async delete(id) {
     return (await this.api.delete(`/${id}`)).data;
+  }
+
+  async saveProductPrices(id, payload) {
+    return (await this.api.post(`/${id}/save-product-prices`, payload)).data;
   }
 }
 

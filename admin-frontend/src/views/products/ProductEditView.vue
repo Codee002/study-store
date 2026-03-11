@@ -439,17 +439,14 @@ async function getColors() {
   console.log("Loaded categories:", colors.value);
 }
 
-
 async function getProduct() {
   try {
     const res = await ProductService.get(id);
-    const p = res.products;
-  console.log(res)
-    const colorIds = p?.colors
-      ? p.colors.map((c) => String(c.id))
-      : []
+    const p = res.product;
+    console.log(res);
+    const colorIds = p?.colors ? p.colors.map((c) => String(c.id)) : [];
 
-      console.log("Product colors:", colorIds);
+    console.log("Product colors:", colorIds);
 
     const imgs = p?.images
       ? p.images.map((im) => ({
@@ -623,7 +620,7 @@ async function onSubmit(values, { setErrors }) {
     }
 
     const fd = new FormData();
-    fd.append("_method", "PUT"); 
+    fd.append("_method", "PUT");
     fd.append("name", values.name);
     fd.append("des", values.des || "");
     fd.append("unit", values.unit);
@@ -634,8 +631,8 @@ async function onSubmit(values, { setErrors }) {
       ? values.color_ids.filter(Boolean)
       : [];
 
-    console.log("COLOR VALUES:", values.color_ids); 
-    console.log("COLOR ID:", colorIds); 
+    console.log("COLOR VALUES:", values.color_ids);
+    console.log("COLOR ID:", colorIds);
     colorIds.forEach((id) => fd.append("color_ids[]", id));
 
     // xóa ảnh: remove_image_ids[]
@@ -655,14 +652,14 @@ async function onSubmit(values, { setErrors }) {
     for (const pair of fd.entries()) {
       console.log(pair[0] + ": ", pair[1]);
     }
-    
+
     await ProductService.update(id, fd);
     // return;
 
     await Swal.fire("Thành công!", "Cập nhật sản phẩm thành công!", "success");
     router.push({ name: "products.list" });
   } catch (e) {
-    console.log(e)
+    console.log(e);
     const status = e?.response?.status;
     const data = e?.response?.data;
 
