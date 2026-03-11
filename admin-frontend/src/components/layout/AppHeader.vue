@@ -13,7 +13,7 @@
       </div>
 
       <div class="ms-auto d-flex align-items-center gap-2">
-        <div class="input-group d-none d-md-flex" style="max-width: 340px">
+        <!-- <div class="input-group d-none d-md-flex" style="max-width: 340px">
           <span class="input-group-text bg-transparent">
             <i class="fa-solid fa-magnifying-glass"></i>
           </span>
@@ -25,7 +25,7 @@
 
         <button class="btn btn-accent">
           <i class="fa-solid fa-plus me-1"></i> New
-        </button>
+        </button> -->
       </div>
     </div>
   </header>
@@ -39,6 +39,7 @@
 }
 .accent {
   color: var(--main-color);
+  font-weight: 750;
 }
 .btn-accent {
   background: var(--main-color);

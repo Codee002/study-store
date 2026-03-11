@@ -2,7 +2,9 @@
   <aside class="sidebar p-3" :style="{ width: collapsed ? '84px' : '280px' }">
     <div class="d-flex align-items-center justify-content-between mb-3">
       <div class="d-flex align-items-center gap-2 me-3">
-        <span class="badge rounded-pill brand-badge">SS</span>
+        <span class="logo-circle">
+          <i class="fa-solid fa-pencil"></i>
+        </span>
         <span v-if="!collapsed" class="fw-semibold">StudyStore</span>
       </div>
 
@@ -50,6 +52,26 @@
       >
         <i class="fa-solid fa-file-invoice me-2"></i>
         <span v-if="!collapsed">Phiếu nhập</span>
+      </RouterLink>
+
+      <RouterLink
+        class="nav-link"
+        :class="{ active: route.name?.toString().startsWith('orders.') }"
+        to="/orders"
+      >
+        <i class="fa-solid fa-receipt me-2"></i>
+        <span v-if="!collapsed">Đơn hàng</span>
+      </RouterLink>
+
+      <RouterLink
+        class="nav-link"
+        :class="{ active: route.name?.toString().startsWith('orders.') }"
+        :to="{
+          name: 'prices.lookup',
+        }"
+      >
+        <i class="fa-solid fa-dollar-sign me-2"></i>
+        <span v-if="!collapsed">Tra cứu giá</span>
       </RouterLink>
 
       <RouterLink
@@ -110,11 +132,20 @@
 
       <RouterLink
         class="nav-link"
-        :class="{ active: route.name?.toString().startsWith('orders.') }"
-        to="/orders"
+        :class="{ active: route.name?.toString().startsWith('reports.') }"
+        to="/reports/product-stats"
       >
-        <i class="fa-solid fa-receipt me-2"></i>
-        <span v-if="!collapsed">Đơn hàng</span>
+        <i class="fa-solid fa-chart-line me-2"></i>
+        <span v-if="!collapsed">Thống kê</span>
+      </RouterLink>
+
+      <RouterLink
+        class="nav-link"
+        :class="{ active: route.name?.toString().startsWith('messages.') }"
+        to="/messages"
+      >
+        <i class="fa-solid fa-comments me-2"></i>
+        <span v-if="!collapsed">Liên hệ</span>
       </RouterLink>
 
       <div class="nav-link" role="button" @click="onLogout()">
@@ -172,8 +203,16 @@ const onLogout = async () => {
   flex-direction: column;
   color: var(--font-color);
 }
-.brand-badge {
+
+.logo-circle {
+  width: 2.4rem;
+  height: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: var(--main-color);
+  border: 1px solid var(--hover-border-color);
+  border-radius: 12px;
   color: var(--dark);
 }
 .nav-link {
