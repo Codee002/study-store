@@ -37,7 +37,12 @@ class CategoryService {
 
   // Lấy chi tiết có phân trang
   async getDetails(id, params = {}) {
-    return (await this.api.get(`/${id}/details`, {params})).data;
+    return (await this.api.get(`/${id}/details`, { params })).data;
+  }
+
+  // Lấy tất cả sản phẩm trong kho
+  async getProductTotalQuantity(params = {}) {
+    return (await this.api.get("/get-product-total-quantity", { params })).data;
   }
 }
 

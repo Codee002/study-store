@@ -7,7 +7,7 @@
       >
         <div>
           <h4 class="mb-1">Chỉnh sửa kho</h4>
-          <div class="small opacity-75">Cập nhật địa chỉ và dung tích kho</div>
+          <div class="small opacity-75">Cập nhật thông tin kho</div>
         </div>
 
         <RouterLink
@@ -57,34 +57,6 @@
                 <ErrorMessage name="address" class="invalid-feedback d-block" />
               </div>
 
-              <!-- capacity -->
-              <div class="col-12 col-md-6">
-                <label class="form-label">Dung tích kho</label>
-
-                <Field name="capacity" v-slot="{ field, meta, errors }">
-                  <input
-                    v-bind="field"
-                    type="number"
-                    inputmode="numeric"
-                    min="1"
-                    step="1"
-                    class="form-control bg-transparent"
-                    :class="{
-                      'is-invalid':
-                        (meta.touched && !meta.valid) || errors.length,
-                    }"
-                    placeholder="Ví dụ: 1000"
-                  />
-                </Field>
-
-                <ErrorMessage
-                  name="capacity"
-                  class="invalid-feedback d-block"
-                />
-                <div class="small opacity-75 mt-1">
-                  Phải là số nguyên lớn hơn 0.
-                </div>
-              </div>
             </div>
 
             <div class="d-flex gap-2 mt-3">
@@ -129,8 +101,8 @@ const id = route.params.id;
 const loading = ref(true);
 const formKey = ref(0);
 
-const initialValues = ref({ address: "", capacity: 1 });
-const originalValues = ref({ address: "", capacity: 1 });
+const initialValues = ref({ address: "" });
+const originalValues = ref({ address: "" });
 
 const schema = yup.object({
   address: yup
@@ -138,12 +110,6 @@ const schema = yup.object({
     .trim()
     .required("Vui lòng nhập địa chỉ kho")
     .max(255, "Địa chỉ tối đa 255 ký tự"),
-  capacity: yup
-    .number()
-    .typeError("Dung tích phải là số")
-    .integer("Dung tích phải là số nguyên")
-    .moreThan(0, "Dung tích phải lớn hơn 0")
-    .required("Vui lòng nhập dung tích kho"),
 });
 
 async function fetchWarehouse() {
@@ -153,10 +119,8 @@ async function fetchWarehouse() {
     const data = res?.data ?? res;
 
     const address = data?.address ?? "";
-    const capacity = data?.capacity ?? 1;
-
-    originalValues.value = { address, capacity };
-    initialValues.value = { address, capacity };
+    originalValues.value = { address };
+    initialValues.value = { address };
 
     formKey.value += 1;
   } catch (e) {
@@ -179,7 +143,6 @@ async function onSubmit(values, { resetForm, setErrors }) {
   try {
     const payload = {
       address: values.address?.trim(),
-      capacity: Number(values.capacity),
     };
 
     await WarehouseService.update(id, payload);

@@ -41,13 +41,6 @@
               </div>
 
               <div class="col-12 col-md-2">
-                <label class="form-label">Dung tích</label>
-                <div class="form-control bg-transparent">
-                  {{ warehouse?.capacity ?? "—" }}
-                </div>
-              </div>
-
-              <div class="col-12 col-md-2">
                 <label class="form-label">SL tồn kho</label>
                 <div class="d-flex align-items-center gap-2">
                   <span class="badge badge-completed">{{
@@ -65,16 +58,6 @@
                 </div>
               </div>
 
-              <div class="col-12 col-md-2">
-                <label class="form-label">Còn trống</label>
-                <div class="d-flex align-items-center gap-2">
-                  <span class="badge badge-completed">{{
-                    warehouse.capacity -
-                      warehouse?.total_quantity -
-                      warehouse.pending_quantity ?? 0
-                  }}</span>
-                </div>
-              </div>
             </div>
 
             <!-- Filters -->
@@ -87,7 +70,7 @@
                 />
               </div>
 
-              <div class="col-12 col-md-4">
+              <div class="col-12 col-md-3">
                 <select v-model="categoryId" class="form-select bg-transparent">
                   <option value="">-- Tất cả danh mục --</option>
                   <option
@@ -100,14 +83,16 @@
                 </select>
               </div>
 
-              <div class="col-12 col-md-2 d-flex gap-2">
-                <button
-                  class="btn btn-outline-secondary w-100"
+              <div class="col-12 col-md-3 d-flex gap-2">
+                <router-link
+                  class="btn btn-outline-success w-100"
                   type="button"
-                  @click="onClearFilters"
-                >
-                  <i class="fa-solid fa-eraser me-1"></i> Xóa
-                </button>
+                  :to="{
+                    name: 'prices.lookup',
+                  }"
+                  >
+                  <i class="fa-solid fa-dollar-sign"></i> Tra cứu giá sản phẩm
+                </router-link>
               </div>
             </div>
 
@@ -126,6 +111,7 @@
                       <th style="min-width: 200px">Màu</th>
                       <th style="width: 140px">SL</th>
                       <th style="width: 200px">Trạng thái</th>
+                      <th style="width: 80px">Thao tác</th>
                     </tr>
                   </thead>
 
@@ -189,6 +175,21 @@
                             {{ statusLabel(it.status) }}
                           </span>
                         </button>
+                      </td>
+                      <!-- Action -->
+                      <td class="text-end pe-3">
+                        <div class="d-flex justify-content-end gap-2">
+                          <RouterLink
+                            class="icon-btn icon-edit"
+                            :to="{
+                              name: 'prices.edit',
+                              params: { id: it.product_id },
+                            }"
+                            title="Chỉnh sửa giá"
+                          >
+                            <i class="fa-solid fa-pen-to-square"></i>
+                          </RouterLink>
+                        </div>
                       </td>
                     </tr>
 
@@ -290,12 +291,11 @@ function getProductThumb(product) {
 }
 
 function statusLabel(s) {
-  // giả định: 1=active, 0=inactive
-  return Number(s) === 1 ? "Đang hoạt động" : "Ngưng";
+  return s === "actived" ? "Đang bán" : "Đã tắt";
 }
 
 function statusBadge(s) {
-  return Number(s) === 1 ? "badge-completed" : "badge-canceled";
+  return s === "actived" ? "badge-completed" : "badge-canceled";
 }
 
 async function fetchData() {
@@ -319,7 +319,7 @@ async function fetchData() {
       last_page: 1,
     };
 
-    console.log(meta.value)
+    console.log(meta.value);
   } catch (e) {
     console.log(e);
     const msg =
@@ -336,12 +336,6 @@ async function fetchData() {
 watch(page, async () => {
   await fetchData();
 });
-
-function onClearFilters() {
-  keyword.value = "";
-  categoryId.value = "";
-  fetchData(1);
-}
 
 // pagination list (window 5 pages)
 const pageList = computed(() => {
@@ -365,16 +359,30 @@ watch([keyword, categoryId], () => {
 
 async function toggleStatus(row) {
   if (!row?.id) return;
+  const text =
+    row.status == "actived"
+      ? "Sản phẩm sẽ được chuyển sang đã tắt. Người dùng sẽ không thể tìm kiếm sản phẩm này"
+      : "Sản phẩm sẽ được chuyển sang đang bán. Người dùng có thể tìm kiếm và mua sản phẩm này";
+  const ok = await Swal.fire({
+    title: "Đổi trạng thái sản phẩm?",
+    text: text,
+    icon: "question",
+    showCancelButton: true,
+    confirmButtonText: "Xác nhận",
+    cancelButtonText: "Hủy",
+  });
+
+  if (!ok.isConfirmed) return;
+
   try {
     togglingId.value = row.id;
     await WarehouseService.toggleStatus(row.id);
-
-    // reload current page để đồng bộ meta/tổng
     await fetchData(meta.value.current_page || 1);
   } catch (e) {
+    console.log(e);
     const msg =
-      e?.response?.data?.message ||
       e?.response?.data?.error ||
+      e?.response?.data?.message ||
       "Cập nhật trạng thái thất bại.";
     await Swal.fire("Lỗi", msg, "error");
   } finally {

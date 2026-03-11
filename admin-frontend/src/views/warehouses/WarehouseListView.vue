@@ -71,7 +71,6 @@
                 <tr>
                   <th class="ps-3" style="width: 160px">Mã kho</th>
                   <th>Địa chỉ</th>
-                  <th class="text-end" style="width: 160px">Dung tích</th>
                   <th class="text-end" style="width: 160px">Số sản phẩm</th>
                   <th class="text-end pe-3" style="width: 160px">Thao tác</th>
                 </tr>
@@ -92,13 +91,6 @@
                     >
                       <div class="fw-semibold">{{ w.address }}</div>
                     </RouterLink>
-                  </td>
-
-                  <!-- Capacity -->
-                  <td class="text-end">
-                    <span class="badge capacity-badge">
-                      {{ w.capacity ?? "-" }}
-                    </span>
                   </td>
 
                   <!-- Product count (fake for now) -->
@@ -133,7 +125,7 @@
 
               <tbody v-else>
                 <tr>
-                  <td colspan="5" class="text-center py-5">
+                  <td colspan="4" class="text-center py-5">
                     <div class="opacity-75">
                       <i
                         class="fa-regular fa-folder-open fs-4 d-block mb-2"
@@ -282,13 +274,6 @@ async function onDeleteClick(warehouseId) {
 }
 
 /* Badges */
-.capacity-badge {
-  background: color-mix(in srgb, var(--main-color) 10%, transparent);
-  border: 1px solid var(--hover-border-color);
-  color: var(--font-color);
-  font-weight: 600;
-}
-
 .count-badge {
   background: color-mix(in srgb, var(--main-color) 14%, transparent);
   border: 1px solid var(--hover-border-color);

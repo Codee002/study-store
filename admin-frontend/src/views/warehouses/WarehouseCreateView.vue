@@ -44,26 +44,6 @@
                 <ErrorMessage name="address" class="invalid-feedback d-block" />
               </div>
 
-              <!-- capacity -->
-              <div class="col-12 col-md-6">
-                <label class="form-label">Dung tích kho</label>
-
-                <Field name="capacity" v-slot="{ field, meta, errors }">
-                  <input
-                    v-bind="field"
-                    type="number"
-                    inputmode="numeric"
-                    min="1"
-                    step="1"
-                    class="form-control bg-transparent"
-                    :class="{ 'is-invalid': (meta.touched && !meta.valid) || errors.length }"
-                    placeholder="Ví dụ: 1000"
-                  />
-                </Field>
-
-                <ErrorMessage name="capacity" class="invalid-feedback d-block" />
-                <div class="small opacity-75 mt-1">Phải là số nguyên lớn hơn 0.</div>
-              </div>
             </div>
 
             <div class="d-flex gap-2 mt-3">
@@ -101,7 +81,6 @@ const router = useRouter();
 
 const initialValues = {
   address: "",
-  capacity: 1,
 };
 
 const schema = yup.object({
@@ -110,12 +89,6 @@ const schema = yup.object({
     .trim()
     .required("Vui lòng nhập địa chỉ kho")
     .max(255, "Địa chỉ tối đa 255 ký tự"),
-  capacity: yup
-    .number()
-    .typeError("Dung tích phải là số")
-    .integer("Dung tích phải là số nguyên")
-    .moreThan(0, "Dung tích phải lớn hơn 0")
-    .required("Vui lòng nhập dung tích kho"),
 });
 
 function onReset(resetFormFn) {
@@ -127,7 +100,6 @@ async function onSubmit(values, { resetForm, setErrors }) {
     // chuẩn hóa payload
     const payload = {
       address: values.address?.trim(),
-      capacity: Number(values.capacity),
     };
 
     await WarehouseService.create(payload);
