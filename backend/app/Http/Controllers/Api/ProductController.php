@@ -4,12 +4,17 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Product\StoreProductRequest;
 use App\Http\Requests\Product\UpdateProductRequest;
+use App\Models\Evaluate;
+use App\Models\Price;
 use App\Models\Product;
 use App\Models\ProductImage;
+use App\Models\Tier;
+use App\Models\WarehouseDetail;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Collection;
 
 class ProductController extends Controller
 {
@@ -137,7 +142,7 @@ class ProductController extends Controller
             $product = Cache::tags(['products'])->remember($cacheKey, 300, function () use ($id) {
                 return Product::query()
                     ->find($id)
-                    ->load(['images', 'category', 'colors']);
+                    ->load(['images', 'category', 'colors', 'prices.tier']);
             });
             Log::info($product);
             if (! $product) {
@@ -147,10 +152,13 @@ class ProductController extends Controller
                 ], 404);
             }
 
+            $stockSummary = $this->buildStockSummary((int) $product->id);
+
             return response()->json([
-                'success'  => true,
-                'message'  => 'Lấy chi tiết sản phẩm thành công',
-                'products' => $product,
+                'success' => true,
+                'message' => 'Lấy chi tiết sản phẩm thành công',
+                'product' => $product,
+                'stock_summary' => $stockSummary,
             ], 200);
         } catch (\Exception $e) {
             return response()->json([
@@ -315,4 +323,606 @@ class ProductController extends Controller
     {
         //
     }
+
+    public function getPrices(Request $request, string $productId)
+    {
+        //
+        try {
+            $product = Product::query()->find($productId)->load("prices");
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Lấy giá sản phẩm thất bại. Vui phần thử lại sau!',
+                'error'   => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function saveProductPrices(Request $request, string $productId)
+    {
+        try {
+            DB::transaction(function () use ($request, $productId) {
+                $product = Product::query()->find($productId);
+                $product->prices()->delete();
+                $row = $request->input("rows", []);
+                if (empty($row)) {
+                    throw new \Exception("Dữ liệu giá sản phẩm không hợp lệ");
+                }
+                foreach ($row as $priceData) {
+                    foreach ($priceData['prices'] as $price) {
+                        Price::query()->create([
+                            'product_id'   => $product->id,
+                            'min_quantity' => $priceData['min_quantity'],
+                            'tier_id'      => $price['tier_id'],
+                            'price'        => $price['price'],
+                        ]);
+                    }
+                }
+            });
+
+            Cache::tags(['products'])->flush();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Lưu giá sản phẩm thành công',
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Lưu giá sản phẩm thất bại. Vui phần thử lại sau!',
+                'error'   => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function getHomeProducts(Request $request)
+    {
+        try {
+            $q          = trim((string) $request->query('q', ''));
+            $categoryId = $request->query('category_id', null);
+            $perPage    = $request->query('per_page', 200);
+            $status     = $request->query('status', null);
+
+            $user       = $request->user();
+            $userTierId = $user?->tier_id;
+
+            // retail tier id
+            $retailTierId = Cache::tags(['tiers'])->remember('tiers:retail:id', 3600, function () {
+                $retailId = Tier::query()->where('code', 'RETAIL')->value('id');
+                if ($retailId) {
+                    return $retailId;
+                }
+                return Tier::query()->where('default', 1)->value('id');
+
+            });
+
+            // tierIds cần lấy price
+            $tierIds = array_values(array_unique(array_filter([$retailTierId, $userTierId])));
+
+            Log::info($tierIds);
+            // cache key theo query + tier
+            $cacheKey = 'warehouses:products:' . md5(json_encode([
+                'q'           => $q,
+                'category_id' => $categoryId,
+                'per_page'    => $perPage,
+                'page'        => (int) $request->query('page', 1),
+                'status'      => $status,
+                'tier_ids'    => $tierIds,
+            ]));
+
+            $result = Cache::tags(['warehouses', 'evaluates', 'orders'])->remember($cacheKey, 300, function () use ($q, $categoryId, $perPage, $status, $tierIds) {
+
+                // subquery tổng tồn theo product_id (tất cả kho)
+                $stockSub = WarehouseDetail::query()
+                    ->select('product_id', DB::raw('SUM(quantity) as stock_quantity'));
+
+                if (! empty($status)) {
+                    $stockSub->where('status', $status);
+                }
+
+                $stockSub->groupBy('product_id');
+
+                $reservedSub = DB::table('order_details')
+                    ->join('orders', 'orders.id', '=', 'order_details.order_id')
+                    ->where('orders.status', 'pending')
+                    ->select('order_details.product_id', DB::raw('SUM(order_details.quantity) as reserved_quantity'))
+                    ->groupBy('order_details.product_id');
+
+                $query = Product::query()
+                    ->joinSub($stockSub, 'ws', function ($join) {
+                        $join->on('products.id', '=', 'ws.product_id');
+                    })
+                    ->leftJoinSub($reservedSub, 'rs', function ($join) {
+                        $join->on('products.id', '=', 'rs.product_id');
+                    })
+                    ->with([
+                        'category',
+                        'images',
+                        'colors:id,color_name',
+                        'prices' => function ($priceQ) use ($tierIds) {
+                            if (! empty($tierIds)) {
+                                $priceQ->whereIn('tier_id', $tierIds);
+                            } else {
+                                $priceQ->whereRaw('1=0');
+                            }
+                            $priceQ->orderBy('min_quantity');
+                        },
+                    ])
+                    ->select(
+                        'products.*',
+                        DB::raw('GREATEST(COALESCE(ws.stock_quantity, 0) - COALESCE(rs.reserved_quantity, 0), 0) as stock_quantity')
+                    )
+                    ->when($q !== '', fn($qq) => $qq->where('products.name', 'like', "%{$q}%"))
+                    ->when($categoryId, fn($qq) => $qq->where('products.category_id', $categoryId))
+                    ->orderByDesc('ws.stock_quantity')
+                    ->orderByDesc('products.id');
+
+                $result = $query->paginate($perPage);
+                $this->appendColorStocksToProducts(collect($result->items()), $status);
+                $this->appendReviewSummaryToProducts(collect($result->items()));
+                $this->appendSoldOrdersCountToProducts(collect($result->items()));
+
+                return $result;
+            });
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Lấy danh sách sản phẩm trong kho thành công',
+                'items'   => $result->items(),
+                'meta'    => [
+                    'current_page' => $result->currentPage(),
+                    'last_page'    => $result->lastPage(),
+                    'per_page'     => $result->perPage(),
+                    'total'        => $result->total(),
+                ],
+            ], 200);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Lấy sản phẩm trong kho thất bại',
+                'error'   => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function getCustomerProductDetail(Request $request, string $id)
+    {
+        try {
+            $status = $request->query('status', 'actived');
+
+            $user       = $request->user();
+            $userTierId = $user?->tier_id;
+
+            $retailTierId = Cache::tags(['tiers'])->remember('tiers:retail:id', 3600, function () {
+                $retailId = Tier::query()->where('code', 'RETAIL')->value('id');
+                if ($retailId) {
+                    return $retailId;
+                }
+
+                return Tier::query()->where('default', 1)->value('id');
+            });
+
+            $tierIds = array_values(array_unique(array_filter([$retailTierId, $userTierId])));
+
+            $cacheKey = 'customer:product-detail:' . md5(json_encode([
+                'id'       => $id,
+                'status'   => $status,
+                'tier_ids' => $tierIds,
+            ]));
+
+            $payload = Cache::tags(['products', 'warehouses', 'evaluates'])->remember($cacheKey, 300, function () use ($id, $status, $tierIds) {
+                $buildStockSub = function () use ($status) {
+                    $stockSub = WarehouseDetail::query()
+                        ->select('product_id', DB::raw('SUM(quantity) as stock_quantity'));
+
+                    if (! empty($status)) {
+                        $stockSub->where('status', $status);
+                    }
+
+                    return $stockSub->groupBy('product_id');
+                };
+
+                $buildReservedSub = function () {
+                    return DB::table('order_details')
+                        ->join('orders', 'orders.id', '=', 'order_details.order_id')
+                        ->where('orders.status', 'pending')
+                        ->select('order_details.product_id', DB::raw('SUM(order_details.quantity) as reserved_quantity'))
+                        ->groupBy('order_details.product_id');
+                };
+
+                $product = Product::query()
+                    ->leftJoinSub($buildStockSub(), 'ws', function ($join) {
+                        $join->on('products.id', '=', 'ws.product_id');
+                    })
+                    ->leftJoinSub($buildReservedSub(), 'rs', function ($join) {
+                        $join->on('products.id', '=', 'rs.product_id');
+                    })
+                    ->with([
+                        'category:id,name',
+                        'images:id,product_id,url',
+                        'colors:id,color_name',
+                        'prices' => function ($priceQ) use ($tierIds) {
+                            if (! empty($tierIds)) {
+                                $priceQ->whereIn('tier_id', $tierIds);
+                            } else {
+                                $priceQ->whereRaw('1=0');
+                            }
+
+                            $priceQ->with('tier:id,code,name')
+                                ->orderBy('min_quantity');
+                        },
+                    ])
+                    ->select(
+                        'products.id',
+                        'products.name',
+                        'products.des',
+                        'products.unit',
+                        'products.category_id',
+                        DB::raw('GREATEST(COALESCE(ws.stock_quantity, 0) - COALESCE(rs.reserved_quantity, 0), 0) as stock_quantity')
+                    )
+                    ->where('products.id', $id)
+                    ->first();
+
+                if (! $product) {
+                    return null;
+                }
+
+                $relatedProducts = Product::query()
+                    ->leftJoinSub($buildStockSub(), 'ws', function ($join) {
+                        $join->on('products.id', '=', 'ws.product_id');
+                    })
+                    ->leftJoinSub($buildReservedSub(), 'rs', function ($join) {
+                        $join->on('products.id', '=', 'rs.product_id');
+                    })
+                    ->with([
+                        'category:id,name',
+                        'images:id,product_id,url',
+                        'colors:id,color_name',
+                        'prices' => function ($priceQ) use ($tierIds) {
+                            if (! empty($tierIds)) {
+                                $priceQ->whereIn('tier_id', $tierIds);
+                            } else {
+                                $priceQ->whereRaw('1=0');
+                            }
+
+                            $priceQ->with('tier:id,code,name')
+                                ->orderBy('min_quantity');
+                        },
+                    ])
+                    ->select(
+                        'products.id',
+                        'products.name',
+                        'products.des',
+                        'products.unit',
+                        'products.category_id',
+                        DB::raw('GREATEST(COALESCE(ws.stock_quantity, 0) - COALESCE(rs.reserved_quantity, 0), 0) as stock_quantity')
+                    )
+                    ->where('products.category_id', $product->category_id)
+                    ->where('products.id', '!=', $product->id)
+                    ->orderByRaw('COALESCE(ws.stock_quantity, 0) DESC')
+                    ->orderByDesc('products.id')
+                    ->limit(8)
+                    ->get();
+
+                $this->appendColorStocksToProducts(collect([$product]), $status);
+                $this->appendColorStocksToProducts($relatedProducts, $status);
+
+                $reviewPayload = $this->getProductReviewsPayload((int) $product->id, 4);
+                $product->setAttribute('rating', $reviewPayload['summary']['avg_rating']);
+                $product->setAttribute('reviews_count', $reviewPayload['summary']['total_reviews']);
+
+                return [
+                    'product'          => $product,
+                    'related_products' => $relatedProducts,
+                    'review_summary'   => $reviewPayload['summary'],
+                    'reviews_preview'  => $reviewPayload['items'],
+                ];
+            });
+
+            if (! $payload) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Không tìm thấy sản phẩm',
+                ], 404);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Lấy chi tiết sản phẩm thành công',
+                'data'    => $payload,
+            ], 200);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Lấy chi tiết sản phẩm thất bại',
+                'error'   => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function getCustomerProductReviews(Request $request, string $id)
+    {
+        try {
+            $productId = (int) $id;
+            $productExists = Product::query()->where('id', $productId)->exists();
+            if (! $productExists) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Khong tim thay san pham',
+                ], 404);
+            }
+
+            $cacheKey = "customer:product-reviews:{$productId}:all";
+            $payload = Cache::tags(['products', 'evaluates'])->remember($cacheKey, 300, function () use ($productId) {
+                return $this->getProductReviewsPayload($productId, null);
+            });
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Lay danh gia san pham thanh cong',
+                'data' => $payload,
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Lay danh gia san pham that bai',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    private function getProductReviewsPayload(int $productId, ?int $limit = 4): array
+    {
+        $baseQuery = Evaluate::query()
+            ->where('product_id', $productId);
+
+        $totalReviews = (int) (clone $baseQuery)->count();
+        $avgRating = round((float) ((clone $baseQuery)->avg('rating') ?? 0), 1);
+
+        $query = Evaluate::query()
+            ->with([
+                'medias:id,evaluate_id,type,url',
+                'order:id,user_id',
+                'order.user:id,username',
+                'order.user.profile:id,user_id,name,avatar',
+            ])
+            ->where('product_id', $productId)
+            ->orderByDesc('created_at')
+            ->orderByDesc('id');
+
+        if ($limit !== null && $limit > 0) {
+            $query->limit($limit);
+        }
+
+        $items = $query->get()->map(function (Evaluate $evaluate) {
+            $user = $evaluate->order?->user;
+            $profile = $user?->profile;
+            return [
+                'id' => (int) ($evaluate->id ?? 0),
+                'rating' => (float) ($evaluate->rating ?? 0),
+                'content' => $evaluate->content === null ? null : (string) $evaluate->content,
+                'created_at' => optional($evaluate->created_at)?->toISOString(),
+                'reviewer' => [
+                    'name' => (string) ($profile?->name ?: $user?->username ?: 'Khach hang'),
+                    'avatar' => (string) ($profile?->avatar ?: ''),
+                ],
+                'medias' => collect($evaluate->medias ?? [])->map(function ($media) {
+                    return [
+                        'id' => (int) ($media->id ?? 0),
+                        'type' => (string) ($media->type ?? 'image'),
+                        'url' => (string) ($media->url ?? ''),
+                    ];
+                })->values()->all(),
+            ];
+        })->values()->all();
+
+        return [
+            'summary' => [
+                'avg_rating' => $avgRating,
+                'total_reviews' => $totalReviews,
+                'five_star' => (int) Evaluate::query()->where('product_id', $productId)->where('rating', '>=', 4.5)->count(),
+            ],
+            'items' => $items,
+        ];
+    }
+
+    private function appendColorStocksToProducts(Collection $products, ?string $status = null): void
+    {
+        if ($products->isEmpty()) {
+            return;
+        }
+
+        $productIds = $products->pluck('id')->filter()->map(fn($id) => (int) $id)->values();
+        if ($productIds->isEmpty()) {
+            return;
+        }
+
+        $stockRows = WarehouseDetail::query()
+            ->leftJoin('colors', 'warehouse_details.color_id', '=', 'colors.id')
+            ->select(
+                'warehouse_details.product_id',
+                'warehouse_details.color_id',
+                'colors.color_name',
+                DB::raw('SUM(warehouse_details.quantity) as stock_quantity')
+            )
+            ->whereIn('warehouse_details.product_id', $productIds)
+            ->when(! empty($status), fn($q) => $q->where('warehouse_details.status', $status))
+            ->groupBy('warehouse_details.product_id', 'warehouse_details.color_id', 'colors.color_name')
+            ->get()
+            ->groupBy('product_id');
+
+        $reservedRows = DB::table('order_details')
+            ->join('orders', 'orders.id', '=', 'order_details.order_id')
+            ->where('orders.status', 'pending')
+            ->whereIn('order_details.product_id', $productIds)
+            ->select(
+                'order_details.product_id',
+                'order_details.color_id',
+                DB::raw('SUM(order_details.quantity) as reserved_quantity')
+            )
+            ->groupBy('order_details.product_id', 'order_details.color_id')
+            ->get()
+            ->groupBy('product_id');
+
+        foreach ($products as $product) {
+            $rowsForProduct = collect($stockRows->get($product->id, []));
+            $reservedForProduct = collect($reservedRows->get($product->id, []))
+                ->keyBy(function ($row) {
+                    return ($row->color_id === null ? 'null' : (string) $row->color_id);
+                });
+            $rowMapByColorId = $rowsForProduct
+                ->whereNotNull('color_id')
+                ->keyBy(fn($row) => (string) $row->color_id);
+
+            $colors = collect($product->colors ?? []);
+            $colorStocks = $colors->map(function ($color) use ($rowMapByColorId, $reservedForProduct) {
+                $row = $rowMapByColorId->get((string) $color->id);
+                $reservedQty = (int) ($reservedForProduct->get((string) $color->id)->reserved_quantity ?? 0);
+
+                return [
+                    'color_id'      => $color->id,
+                    'color_name'    => $color->color_name,
+                    'stock_quantity' => max(0, (int) ($row->stock_quantity ?? 0) - $reservedQty),
+                ];
+            });
+
+            $colorIdsInPivot = $colors->pluck('id')->map(fn($id) => (int) $id);
+            $extraColorStocks = $rowsForProduct
+                ->whereNotNull('color_id')
+                ->filter(fn($row) => ! $colorIdsInPivot->contains((int) $row->color_id))
+                ->map(function ($row) use ($reservedForProduct) {
+                    $reservedQty = (int) ($reservedForProduct->get((string) $row->color_id)->reserved_quantity ?? 0);
+                    return [
+                        'color_id'      => (int) $row->color_id,
+                        'color_name'    => $row->color_name,
+                        'stock_quantity' => max(0, (int) $row->stock_quantity - $reservedQty),
+                    ];
+                });
+
+            $product->setAttribute('color_stocks', $colorStocks->concat($extraColorStocks)->values()->all());
+        }
+    }
+
+    private function appendReviewSummaryToProducts(Collection $products): void
+    {
+        if ($products->isEmpty()) {
+            return;
+        }
+
+        $productIds = $products->pluck('id')->filter()->map(fn($id) => (int) $id)->values();
+        if ($productIds->isEmpty()) {
+            return;
+        }
+
+        $reviewRows = Evaluate::query()
+            ->select(
+                'product_id',
+                DB::raw('COUNT(*) as total_reviews'),
+                DB::raw('ROUND(AVG(rating), 1) as avg_rating')
+            )
+            ->whereIn('product_id', $productIds)
+            ->groupBy('product_id')
+            ->get()
+            ->keyBy(fn($row) => (int) $row->product_id);
+
+        foreach ($products as $product) {
+            $review = $reviewRows->get((int) $product->id);
+
+            $product->setAttribute('rating', (float) ($review->avg_rating ?? 0));
+            $product->setAttribute('reviews_count', (int) ($review->total_reviews ?? 0));
+        }
+    }
+
+    private function appendSoldOrdersCountToProducts(Collection $products): void
+    {
+        if ($products->isEmpty()) {
+            return;
+        }
+
+        $productIds = $products->pluck('id')->filter()->map(fn($id) => (int) $id)->values();
+        if ($productIds->isEmpty()) {
+            return;
+        }
+
+        $soldRows = DB::table('order_details')
+            ->join('orders', 'orders.id', '=', 'order_details.order_id')
+            ->select(
+                'order_details.product_id',
+                DB::raw('COUNT(DISTINCT order_details.order_id) as sold_orders')
+            )
+            ->whereIn('order_details.product_id', $productIds)
+            ->whereIn('orders.status', ['completed'])
+            ->groupBy('order_details.product_id')
+            ->get()
+            ->keyBy(fn($row) => (int) $row->product_id);
+
+        foreach ($products as $product) {
+            $sold = $soldRows->get((int) $product->id);
+            $product->setAttribute('sold', (int) ($sold->sold_orders ?? 0));
+        }
+    }
+
+    private function buildStockSummary(int $productId): array
+    {
+        $warehouseRows = DB::table('warehouse_details as wd')
+            ->join('warehouses as w', 'w.id', '=', 'wd.warehouse_id')
+            ->select('wd.warehouse_id', 'w.address', DB::raw('SUM(wd.quantity) as quantity'))
+            ->where('wd.product_id', $productId)
+            ->groupBy('wd.warehouse_id', 'w.address')
+            ->orderByDesc(DB::raw('SUM(wd.quantity)'))
+            ->get();
+
+        $colorRows = DB::table('warehouse_details as wd')
+            ->leftJoin('colors as c', 'c.id', '=', 'wd.color_id')
+            ->select('wd.color_id', 'c.color_name', DB::raw('SUM(wd.quantity) as quantity'))
+            ->where('wd.product_id', $productId)
+            ->groupBy('wd.color_id', 'c.color_name')
+            ->orderByDesc(DB::raw('SUM(wd.quantity)'))
+            ->get();
+
+        $pendingQuantity = DB::table('receipt_details as rd')
+            ->join('receipts as r', 'r.id', '=', 'rd.receipt_id')
+            ->where('rd.product_id', $productId)
+            ->where('r.status', 'pending')
+            ->sum('rd.quantity');
+
+        $purchasedQuantity = DB::table('receipt_details as rd')
+            ->join('receipts as r', 'r.id', '=', 'rd.receipt_id')
+            ->where('rd.product_id', $productId)
+            ->where('r.status', 'completed')
+            ->sum('rd.quantity');
+
+        $soldQuantity = DB::table('order_details as od')
+            ->join('orders as o', 'o.id', '=', 'od.order_id')
+            ->where('od.product_id', $productId)
+            ->where('o.status', 'completed')
+            ->sum('od.quantity');
+
+        $totalQuantity = $warehouseRows->sum('quantity');
+
+        return [
+            'total_quantity'   => (int) $totalQuantity,
+            'purchased_quantity' => (int) $purchasedQuantity,
+            'sold_quantity'      => (int) $soldQuantity,
+            'pending_quantity' => (int) $pendingQuantity,
+            'warehouses'       => $warehouseRows->map(function ($row) {
+                return [
+                    'warehouse_id' => (int) $row->warehouse_id,
+                    'address'      => $row->address,
+                    'quantity'     => (int) $row->quantity,
+                ];
+            })->values(),
+            'colors'           => $colorRows->map(function ($row) {
+                return [
+                    'color_id'   => $row->color_id ? (int) $row->color_id : null,
+                    'color_name' => $row->color_name ?? 'Khong mau',
+                    'quantity'   => (int) $row->quantity,
+                ];
+            })->values(),
+        ];
+    }
+
 }

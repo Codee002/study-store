@@ -30,4 +30,9 @@ class Product extends Model
     {
         return $this->belongsToMany(Color::class);
     }
+
+    public function prices()
+    {
+        return $this->hasMany(Price::class);
+    }
 }
