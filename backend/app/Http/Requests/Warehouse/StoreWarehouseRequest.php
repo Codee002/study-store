@@ -15,8 +15,7 @@ class StoreWarehouseRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'address'  => ['required', 'string', 'max:255', 'unique:warehouses,address'],
-            'capacity' => ['required', 'integer', 'min:1'],
+            'address' => ['required', 'string', 'max:255', 'unique:warehouses,address'],
         ];
     }
 
@@ -27,9 +26,6 @@ class StoreWarehouseRequest extends FormRequest
             'address.max'       => 'Địa chỉ kho tối đa 255 ký tự',
             'address.unique'    => 'Địa chỉ kho đã tồn tại',
 
-            'capacity.required' => 'Vui lòng nhập dung tích kho',
-            'capacity.integer'  => 'Dung tích kho phải là số nguyên',
-            'capacity.min'      => 'Dung tích kho phải lớn hơn 0',
         ];
     }
 

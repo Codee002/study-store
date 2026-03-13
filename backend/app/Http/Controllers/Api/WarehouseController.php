@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Warehouse\StoreWarehouseRequest;
 use App\Http\Requests\Warehouse\UpdateWarehouseRequest;
+use App\Models\Product;
 use App\Models\Warehouse;
 use App\Models\WarehouseDetail;
 use App\Services\WarehouseService;
@@ -81,8 +82,7 @@ class WarehouseController extends Controller
 
             DB::transaction(function () use ($request, &$warehouse) {
                 $warehouse = Warehouse::query()->create([
-                    'address'  => $request->input('address'),
-                    'capacity' => (int) $request->input('capacity'),
+                    'address' => $request->input('address'),
                 ]);
             });
 
@@ -185,8 +185,7 @@ class WarehouseController extends Controller
                 }
 
                 $warehouse->update([
-                    'address'  => $request->input('address'),
-                    'capacity' => (int) $request->input('capacity'),
+                    'address' => $request->input('address'),
                 ]);
             });
 
@@ -281,13 +280,12 @@ class WarehouseController extends Controller
                 ->remember($cacheKey, 300, function () use ($id, $q, $categoryId, $perPage, $warehouseService) {
 
                     $warehouse = Warehouse::query()
-                        ->select('id', 'address', 'capacity', 'created_at', 'updated_at')
+                        ->select('id', 'address', 'created_at', 'updated_at')
                         ->find($id);
 
                     if (! $warehouse) {
                         return null;
                     }
-
 
                     $pendingQuantity = $warehouseService->getPendingQuantity($warehouse->id);
 
@@ -319,7 +317,6 @@ class WarehouseController extends Controller
                         'warehouse' => [
                             'id'               => $warehouse->id,
                             'address'          => $warehouse->address,
-                            'capacity'         => $warehouse->capacity,
                             'created_at'       => $warehouse->created_at,
                             'updated_at'       => $warehouse->updated_at,
                             'pending_quantity' => $pendingQuantity,
@@ -370,6 +367,12 @@ class WarehouseController extends Controller
                     return;
                 }
 
+                if ($detail->status === 'disabled') {
+                    $product = $detail->product;
+                    if ($product->prices()->where("min_quantity", 1)->doesntExist()) {
+                        throw new \RuntimeException("Sản phẩm chưa có giá bán. Vui lòng thiết lập giá trước khi kích hoạt sản phẩm.");
+                    }
+                }
                 $detail->status = $detail->status === 'actived' ? 'disabled' : 'actived';
                 $detail->save();
             });
@@ -394,6 +397,73 @@ class WarehouseController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Cập nhật trạng thái thất bại',
+                'error'   => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    // Lấy tất cả sản phẩm của toàn bộ kho
+    public function getProductTotalQuantity(Request $request)
+    {
+        Log::info($request->all());
+        try {
+            $q          = trim((string) $request->query('q', ''));
+            $categoryId = $request->query('category_id', null);
+            $perPage    = $request->query('per_page', 200);
+            $status     = $request->query('status', null);
+
+            // cache key theo query
+            $cacheKey = 'warehouse:products:' . md5(json_encode([
+                'q'           => $q,
+                'category_id' => $categoryId,
+                'per_page'    => $perPage,
+                'page'        => (int) $request->query('page', 1),
+                'status'      => $status,
+            ]));
+
+            $result = Cache::tags(['warehouse'])->remember($cacheKey, 300, function () use ($q, $categoryId, $perPage, $status) {
+
+                // subquery tổng tồn theo product_id (tất cả kho)
+                $stockSub = WarehouseDetail::query()
+                    ->select('product_id', DB::raw('SUM(quantity) as stock_quantity'));
+                if (! empty($status)) {
+                    Log::info("STATUS");
+
+                    $stockSub->where('status', $status);
+                }
+                $stockSub->groupBy('product_id');
+
+                $query = Product::query()
+                    ->joinSub($stockSub, 'ws', function ($join) {
+                        $join->on('products.id', '=', 'ws.product_id');
+                    })
+                    ->with(['category', 'images'])
+                    ->select('products.*', 'ws.stock_quantity')
+                    ->when($q !== '', fn($qq) => $qq->where('products.name', 'like', "%{$q}%"))
+                    ->when($categoryId, fn($qq) => $qq->where('products.category_id', $categoryId))
+                    ->orderByDesc('ws.stock_quantity')
+                    ->orderByDesc('products.id');
+
+                return $query->paginate($perPage);
+            });
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Lấy danh sách sản phẩm trong kho thành công',
+                'items'   => $result->items(),
+                'meta'    => [
+                    'current_page' => $result->currentPage(),
+                    'last_page'    => $result->lastPage(),
+                    'per_page'     => $result->perPage(),
+                    'total'        => $result->total(),
+                ],
+
+            ], 200);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Lấy sản phẩm trong kho thất bại',
                 'error'   => $e->getMessage(),
             ], 500);
         }

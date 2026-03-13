@@ -10,7 +10,6 @@ class Warehouse extends Model
     protected $fillable = [
         'name',
         'address',
-        'capacity',
     ];
     // Relationships
     public function receipts()

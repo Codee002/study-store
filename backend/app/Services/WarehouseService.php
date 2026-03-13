@@ -1,10 +1,11 @@
 <?php
 namespace App\Services;
 
+use App\Models\Product;
 use App\Models\ReceiptDetail;
 use App\Models\Warehouse;
 use App\Models\WarehouseDetail;
-use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 
 class WarehouseService
 {
@@ -49,7 +50,7 @@ class WarehouseService
         int $productId,
         ?int $colorId,
         int $quantity,
-        $defaultStatus = 'disabled'
+        string $defaultStatus = 'disabled'
     ): WarehouseDetail {
         if ($quantity <= 0) {
             throw new \InvalidArgumentException('Số lượng phải lớn hơn 0');
@@ -117,7 +118,8 @@ class WarehouseService
     /**
      * Lấy số lượng tổng trong kho
      */
-    public function getTotalQuantity($warehouseId){
+    public function getTotalQuantity($warehouseId)
+    {
         $total = WarehouseDetail::query()
             ->where('warehouse_id', $warehouseId)
             ->sum('quantity');
