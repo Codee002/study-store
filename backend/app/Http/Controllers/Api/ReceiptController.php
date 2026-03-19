@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Receipt;
 use App\Models\ReceiptDetail;
-use App\Models\Warehouse;
 use App\Services\WarehouseService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -75,23 +74,11 @@ class ReceiptController extends Controller
     /**
      * Store a newly created resource in storage.
      */
-    public function store(Request $request, WarehouseService $warehouseService)
+    public function store(Request $request)
     {
         Log::info($request->all());
         try {
             $receipt = null;
-
-            // Tính SL tồn kho
-            $warehouse       = Warehouse::find($request->input('warehouse_id'));
-            $quantityPending = $warehouseService->getPendingQuantity($warehouse->id);
-            $totalQuantity   = $warehouseService->getTotalQuantity($warehouse->id);
-
-            if (($quantityPending + collect($request->input("items"))->sum("quantity")) + $totalQuantity > $warehouse->capacity) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Số lượng hàng trong kho không đủ để tạo phiếu nhập!',
-                ], 400);
-            }
 
             DB::transaction(function () use ($request, &$receipt) {
                 $receipt = Receipt::query()->create([
@@ -220,7 +207,7 @@ class ReceiptController extends Controller
                     $productId = $d->product_id;
                     $colorId   = $d->color_id ? $d->color_id : null;
                     $qty       = $d->quantity;
-                    $stockService->increase($warehouseId, $productId, $colorId, $qty, 1);
+                    $stockService->increase($warehouseId, $productId, $colorId, $qty, 'actived');
                 }
 
                 // đổi trạng thái phiếu
