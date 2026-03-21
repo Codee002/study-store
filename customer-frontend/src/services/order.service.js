@@ -129,6 +129,11 @@ class OrderService {
       files.forEach((file) => {
         if (file) formData.append(`reviews[${idx}][media_files][]`, file);
       });
+
+      const deleteIds = Array.isArray(row?.delete_media_ids) ? row.delete_media_ids : [];
+      deleteIds.forEach((id) => {
+        formData.append(`reviews[${idx}][delete_media_ids][]`, String(Number(id || 0)));
+      });
     });
 
     const res = (await this.api.post(`/orders/my/${Number(orderId)}/evaluate`, formData)).data;
