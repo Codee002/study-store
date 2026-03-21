@@ -1,6 +1,7 @@
 ﻿<template>
   <div class="chat-page">
-    <div class="chat-shell card card-soft shadow-sm">
+    <div class="backdrop"></div>
+    <div class="chat-shell glass">
       <header class="chat-header d-flex align-items-center justify-content-between">
         <div class="d-flex align-items-center gap-2">
           <div class="avatar" v-if="currentContact?.avatar">
@@ -18,7 +19,7 @@
             </div>
           </div>
         </div>
-        <RouterLink class="badge bg-primary-subtle text-primary text-decoration-none" to="/messages">
+        <RouterLink class="chip" to="/messages">
           <i class="fa-solid fa-list me-1"></i> Danh sách
         </RouterLink>
       </header>
@@ -49,10 +50,24 @@
             </div>
 
             <div class="chat-row" :class="message.sender === 'me' ? 'from-me' : 'from-them'">
-              <div class="bubble">
-                <div class="bubble-text" v-if="message.text">{{ message.text }}</div>
+              <div class="bubble" :class="{ recalled: message.type === 'recalled' }">
+                <div
+                  v-if="message.sender === 'me' && message.type !== 'recalled'"
+                  class="msg-actions left"
+                >
+                  <button class="icon-btn" @click.stop="toggleMenu(message.id)">
+                    <i class="fa-solid fa-ellipsis-vertical"></i>
+                  </button>
+                  <div v-if="openMenuId === message.id" class="dropdown-menu show">
+                    <button class="dropdown-item" @click.stop="recall(message)">Thu hồi</button>
+                  </div>
+                </div>
+                <div class="bubble-text" v-if="message.type === 'recalled'">
+                  <i class="fa-regular fa-circle-xmark me-1"></i> Tin nhắn đã bị thu hồi
+                </div>
+                <div class="bubble-text" v-else-if="message.text">{{ message.text }}</div>
 
-                <div v-if="message.attachments?.length" class="attach-grid">
+                <div v-if="message.attachments?.length && message.type !== 'recalled'" class="attach-grid">
                   <a
                     v-for="file in message.attachments"
                     :key="file.id"
@@ -69,19 +84,27 @@
                     </div>
                     <div v-else class="attach-thumb" :class="file.type">
                       <i v-if="file.type === 'pdf'" class="fa-regular fa-file-pdf"></i>
-                      <i v-else class="fa-regular fa-file-excel"></i>
-                    </div>
-                    <div class="attach-name text-truncate" :title="file.name">
-                      {{ file.name }}
+                      <i v-else class="fa-regular fa-file-lines"></i>
                     </div>
                   </a>
                 </div>
 
                 <div class="meta small opacity-75 d-flex gap-2 align-items-center">
                   <span>{{ formatTime(message.time) }}</span>
-                  <span v-if="message.sender === 'me'">
-                    <i class="fa-solid fa-check-double text-primary"></i>
+                  <span
+                    v-if="message.sender === 'me' && message.id === lastOwnMessageId && message.is_read_by_partner"
+                  >
+                    Đã xem
                   </span>
+                </div>
+
+                <div
+                  v-if="message.sender === 'me' && message.type !== 'recalled'"
+                  class="msg-actions"
+                >
+                  <button class="icon-btn" @click="recall(message)">
+                    <i class="fa-solid fa-ellipsis-vertical"></i>
+                  </button>
                 </div>
               </div>
             </div>
@@ -143,7 +166,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import dayjs from "dayjs";
 import MessageService from "@/services/message.service";
@@ -160,6 +183,11 @@ const loadingMessages = ref(false);
 const sending = ref(false);
 const error = ref("");
 const currentAdminId = ref(getCurrentUserId());
+const channelName = computed(() =>
+  currentAdminId.value ? `user.${currentAdminId.value}` : null
+);
+let echoChannel = null;
+const openMenuId = ref(null);
 
 const currentContact = computed(() =>
   contacts.value.find((c) => String(c.conversation_id) === String(route.params.id)) || null
@@ -168,6 +196,18 @@ const orderedMessages = computed(() =>
   [...messages.value].sort((a, b) => new Date(a.time) - new Date(b.time))
 );
 const canSend = computed(() => draft.value.trim() || pendingFiles.value.length);
+const lastOwnMessageId = computed(() => {
+  for (let i = orderedMessages.value.length - 1; i >= 0; i -= 1) {
+    const m = orderedMessages.value[i];
+    if (m.sender === "me") return m.id;
+  }
+  return null;
+});
+// Auto scroll when số lượng tin nhắn thay đổi
+watch(
+  () => messages.value.length,
+  () => nextTick(() => scrollToBottom()),
+);
 
 function getCurrentUserId() {
   try {
@@ -229,13 +269,42 @@ function mapMedia(media) {
 }
 
 function mapMessage(raw) {
+  const readIds = raw.read_by_user_ids || [];
+  const otherId = currentContact.value?.id;
   return {
     id: raw.id,
     sender: raw.user_id === currentAdminId.value ? "me" : "them",
     text: raw.content,
     time: raw.created_at,
+    type: raw.type,
+    is_read: raw.is_read ?? readIds.includes(currentAdminId.value),
+    is_read_by_partner: otherId ? readIds.includes(otherId) : false,
     attachments: (raw.medias || []).map(mapMedia),
   };
+}
+
+function mapIncoming(payload) {
+  const readIds = payload.read_by_user_ids || [];
+  const otherId = currentContact.value?.id;
+  return {
+    id: payload.id,
+    sender: payload.user_id === currentAdminId.value ? "me" : "them",
+    text: payload.content,
+    time: payload.created_at,
+    type: payload.type,
+    is_read: payload.is_read ?? readIds.includes(currentAdminId.value) ?? (payload.user_id === currentAdminId.value),
+    is_read_by_partner: otherId ? readIds.includes(otherId) : false,
+    attachments: (payload.medias || []).map(mapMedia),
+  };
+}
+
+function upsertMessage(msg) {
+  const idx = messages.value.findIndex((m) => m.id === msg.id);
+  if (idx !== -1) {
+    messages.value[idx] = msg;
+  } else {
+    messages.value.push(msg);
+  }
 }
 
 async function fetchContacts() {
@@ -254,6 +323,9 @@ async function loadMessages(conversationId) {
   try {
     const res = await MessageService.fetchMessages(conversationId);
     messages.value = (res?.messages || []).map(mapMessage);
+    // Refresh badges after server marks unread messages as read
+    await fetchContacts();
+    window.dispatchEvent(new CustomEvent("messages-read"));
     await nextTick();
     scrollToBottom();
   } catch (e) {
@@ -333,6 +405,62 @@ async function send() {
   }
 }
 
+async function recall(message) {
+  if (!currentContact.value || message.sender !== "me" || message.type === "recalled") return;
+  openMenuId.value = null;
+  // Update UI ngay lập tức
+  upsertMessage({
+    ...message,
+    text: null,
+    attachments: [],
+    type: "recalled",
+  });
+  try {
+    await MessageService.recallMessage(route.params.id, message.id);
+  } catch (e) {
+    error.value =
+      e?.response?.data?.message || e?.message || "Không thu hồi được tin nhắn.";
+  }
+}
+
+function toggleMenu(id) {
+  openMenuId.value = openMenuId.value === id ? null : id;
+}
+
+function stopRealtime() {
+  if (channelName.value && window.Echo) {
+    window.Echo.leave(channelName.value);
+  }
+  echoChannel = null;
+}
+
+function handleIncomingMessage(event) {
+  if (!event?.conversation_id) return;
+  // Skip echo of my own message to avoid double render; optimistic + API response already handle it
+  if (event.user_id === currentAdminId.value) {
+    messages.value = messages.value.filter((m) => m.status !== "sending");
+    return;
+  }
+  if (String(event.conversation_id) !== String(route.params.id)) {
+    // Just refresh contact badges; user may be on another thread
+    fetchContacts();
+    return;
+  }
+
+  const normalized = mapIncoming(event);
+  upsertMessage(normalized);
+  nextTick(scrollToBottom);
+}
+
+function startRealtime() {
+  if (!channelName.value || !window.Echo) return;
+  stopRealtime();
+  echoChannel = window.Echo.private(channelName.value).listen(
+    ".MessageSent",
+    handleIncomingMessage
+  );
+}
+
 function removePending(id) {
   const target = pendingFiles.value.find((f) => f.id === id);
   if (target?.previewUrl) {
@@ -344,29 +472,38 @@ function removePending(id) {
 function scrollToBottom() {
   const el = scrollBody.value;
   if (!el) return;
-  el.scrollTop = el.scrollHeight;
+  // Dùng RAF để chắc chắn DOM đã render
+  requestAnimationFrame(() => {
+    el.scrollTop = el.scrollHeight;
+  });
 }
 
 async function bootstrap() {
   await fetchContacts();
   await loadMessages(route.params.id);
+  startRealtime();
 }
 
 onMounted(bootstrap);
+onBeforeUnmount(stopRealtime);
 
 watch(
   () => route.params.id,
   async () => {
     await fetchContacts();
     await loadMessages(route.params.id);
+    startRealtime();
   }
 );
 </script>
 
 <style scoped>
 .chat-page {
-  padding: 16px;
+  padding: 8px 0 0;
   color: var(--font-color);
+}
+.backdrop {
+  display: none;
 }
 .chat-shell {
   background: var(--main-extra-bg);
@@ -374,21 +511,38 @@ watch(
   border-radius: 16px;
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 120px);
+  height: calc(100vh - 110px);
+  width: 100%;
+  box-shadow: 0 12px 28px color-mix(in srgb, #000 10%, transparent);
+}
+.glass {
+  overflow: hidden;
 }
 .chat-header {
   padding: 16px 20px;
   border-bottom: 1px solid var(--border-color);
+  background: color-mix(in srgb, var(--primary) 12%, var(--main-extra-bg));
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: var(--hover-background-color);
+  color: var(--primary);
+  text-decoration: none;
 }
 .avatar {
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   border-radius: 12px;
   display: grid;
   place-items: center;
-  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
   color: var(--primary);
-  border: 1px solid color-mix(in srgb, var(--primary) 30%, transparent);
+  border: 1px solid color-mix(in srgb, var(--primary) 28%, transparent);
   overflow: hidden;
 }
 .avatar img {
@@ -399,13 +553,11 @@ watch(
 .chat-body {
   flex: 1;
   overflow: auto;
-  padding: 16px 20px;
+  padding: 18px 20px;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  background: radial-gradient(circle at 20% 20%, color-mix(in srgb, var(--primary) 4%, transparent), transparent 30%),
-    radial-gradient(circle at 80% 40%, color-mix(in srgb, var(--success) 4%, transparent), transparent 28%),
-    var(--hover-background-color);
+  background: #ffffff;
 }
 .empty-state {
   margin-top: 40px;
@@ -427,16 +579,60 @@ watch(
   justify-content: flex-start;
 }
 .bubble {
-  max-width: min(640px, 80%);
-  background: var(--hover-background-color);
-  border: 1px solid var(--border-color);
+  position: relative;
+  max-width: min(720px, 78%);
+  background: #ffffff;
+  border: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
   border-radius: 18px;
   padding: 12px 14px 10px;
-  box-shadow: 0 8px 24px color-mix(in srgb, #000 6%, transparent);
+  box-shadow: 0 6px 18px color-mix(in srgb, #000 8%, transparent);
 }
 .from-me .bubble {
-  background: color-mix(in srgb, var(--primary) 18%, transparent);
-  border-color: color-mix(in srgb, var(--primary) 30%, transparent);
+  background: #ffddba;
+  border-color: color-mix(in srgb, #f59e0b 35%, #ffddba);
+}
+.bubble.recalled {
+  font-style: italic;
+  color: #9ca3af;
+  background: #f9fafb;
+  border-style: dashed;
+}
+.msg-actions {
+  position: absolute;
+  top: 8px;
+  left: -38px;
+}
+.msg-actions.left .dropdown-menu {
+  left: 0;
+  top: 28px;
+}
+.icon-btn {
+  border: 1px solid color-mix(in srgb, var(--border-color) 50%, transparent);
+  background: #ffddba;
+  border-radius: 10px;
+  padding: 4px 6px;
+  color: var(--font-color);
+}
+.dropdown-menu {
+  position: absolute;
+  min-width: 120px;
+  background: #ffffff;
+  border: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
+  border-radius: 10px;
+  padding: 6px 0;
+  box-shadow: 0 10px 24px color-mix(in srgb, #000 10%, transparent);
+  z-index: 5;
+}
+.dropdown-item {
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  color: var(--font-color);
+}
+.dropdown-item:hover {
+  background: var(--hover-background-color);
 }
 .bubble-text {
   white-space: pre-line;
@@ -444,21 +640,22 @@ watch(
   margin-bottom: 8px;
 }
 .attach-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 8px;
+  display: flex;
+  gap: 10px;
   margin-bottom: 6px;
+  flex-wrap: wrap;
 }
 .attach-card {
   border: 1px dashed var(--border-color);
   border-radius: 12px;
   padding: 8px 10px;
-  background: color-mix(in srgb, var(--main-extra-bg) 80%, transparent);
-  display: flex;
+  background: var(--hover-background-color);
+  display: inline-flex;
   align-items: center;
   gap: 8px;
   color: inherit;
   text-decoration: none;
+  min-width: 120px;
 }
 .attach-media {
   width: 72px;
@@ -477,12 +674,14 @@ watch(
   object-fit: cover;
 }
 .attach-thumb {
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
   display: grid;
   place-items: center;
   color: var(--font-color);
+  background: color-mix(in srgb, var(--border-color) 20%, transparent);
+  font-size: 18px;
 }
 .attach-thumb.image {
   background: color-mix(in srgb, var(--primary) 10%, transparent);
@@ -513,8 +712,8 @@ watch(
   bottom: 0;
 }
 .chat-input .form-control {
-  background: var(--hover-background-color);
-  border: 1px solid var(--border-color);
+  background: #ffffff;
+  border: 1px solid color-mix(in srgb, var(--border-color) 70%, transparent);
   resize: none;
 }
 .chat-input.disabled {
@@ -554,6 +753,18 @@ watch(
 }
 .pending-pill .btn-link {
   line-height: 1;
+}
+.msg-actions {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+}
+.icon-btn {
+  border: 1px solid color-mix(in srgb, var(--border-color) 50%, transparent);
+  background: #fff;
+  border-radius: 10px;
+  padding: 4px 6px;
+  color: var(--font-color);
 }
 @media (max-width: 768px) {
   .chat-shell {

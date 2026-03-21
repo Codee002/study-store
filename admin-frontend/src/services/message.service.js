@@ -28,6 +28,10 @@ class MessageService {
       })
     ).data;
   }
+
+  async recallMessage(conversationId, messageId) {
+    return (await this.api.post(`/${conversationId}/messages/${messageId}/recall`)).data;
+  }
 }
 
 export default new MessageService();
