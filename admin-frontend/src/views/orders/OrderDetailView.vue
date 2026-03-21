@@ -8,9 +8,19 @@
           <h4 class="mb-1">Chi tiết đơn hàng #{{ id }}</h4>
           <div class="small opacity-75">{{ formatDateTime(order?.created_at) }}</div>
         </div>
-        <RouterLink class="btn btn-outline-secondary" :to="{ name: 'orders.list' }">
-          <i class="fa-solid fa-arrow-left me-1"></i> Quay lại
-        </RouterLink>
+        <div class="d-flex flex-wrap gap-2">
+          <button
+            v-if="order?.status === 'completed'"
+            class="btn btn-main"
+            type="button"
+            @click="printInvoice"
+          >
+            <i class="fa-solid fa-file-pdf me-1"></i> In hóa đơn (PDF)
+          </button>
+          <RouterLink class="btn btn-outline-secondary" :to="{ name: 'orders.list' }">
+            <i class="fa-solid fa-arrow-left me-1"></i> Quay lại
+          </RouterLink>
+        </div>
       </div>
     </div>
 
@@ -298,6 +308,114 @@ function normalizeMediaType(typeValue) {
 
 function discountLabel(discount) {
   return `${discount?.des || "Khuyen mai"} - ${Number(discount?.percent || 0)}%`;
+}
+
+function buildInvoiceHtml() {
+  if (!order.value) return "";
+  const o = order.value;
+  const rows = (o.items || [])
+    .map(
+      (item, idx) => `
+        <tr>
+          <td style="padding:6px 8px;border:1px solid #ddd;">${idx + 1}</td>
+          <td style="padding:6px 8px;border:1px solid #ddd;">${item.name}</td>
+          <td style="padding:6px 8px;border:1px solid #ddd;">${item.color_name || ""}</td>
+          <td style="padding:6px 8px;border:1px solid #ddd;text-align:right;">${item.quantity}</td>
+          <td style="padding:6px 8px;border:1px solid #ddd;text-align:right;">${formatMoney(item.unit_price)}</td>
+          <td style="padding:6px 8px;border:1px solid #ddd;text-align:right;">${formatMoney(item.line_total)}</td>
+        </tr>`
+    )
+    .join("");
+
+  const delivery = o.delivery_info || {};
+  const payment = o.payment || {};
+  const customer = o.customer || {};
+
+  return `
+    <html>
+      <head>
+        <title>Invoice #${id.value}</title>
+        <style>
+          body { font-family: Arial, sans-serif; padding: 24px; color: #111; }
+          h1 { margin: 0 0 8px; }
+          .muted { color: #666; font-size: 13px; }
+          table { border-collapse: collapse; width: 100%; margin-top: 12px; }
+          .totals td { padding: 6px 8px; }
+        </style>
+      </head>
+      <body>
+        <h1>Hóa đơn bán hàng</h1>
+        <div class="muted">Mã đơn: #${id.value} | Ngày: ${formatDateTime(o.created_at)}</div>
+        <hr />
+        <h3>Khách hàng</h3>
+        <div>${customer.name || "-"}</div>
+        <div class="muted">${customer.email || "-"}</div>
+        <h3 style="margin-top:12px;">Giao hàng</h3>
+        <div>${delivery.name || "-"}</div>
+        <div>${delivery.phone || "-"}</div>
+        <div class="muted">${delivery.address || "-"}</div>
+        <h3 style="margin-top:12px;">Thanh toán</h3>
+        <div>${payment.name || "-"}</div>
+
+        <h3 style="margin-top:16px;">Chi tiết đơn hàng</h3>
+        <table>
+          <thead>
+            <tr style="background:#f4f4f4;">
+              <th style="padding:6px 8px;border:1px solid #ddd;text-align:left;">#</th>
+              <th style="padding:6px 8px;border:1px solid #ddd;text-align:left;">Sản phẩm</th>
+              <th style="padding:6px 8px;border:1px solid #ddd;text-align:left;">Phân loại</th>
+              <th style="padding:6px 8px;border:1px solid #ddd;text-align:right;">SL</th>
+              <th style="padding:6px 8px;border:1px solid #ddd;text-align:right;">Đơn giá</th>
+              <th style="padding:6px 8px;border:1px solid #ddd;text-align:right;">Thành tiền</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+
+        <table class="totals" style="width:100%; margin-top:12px;">
+          <tr>
+            <td style="text-align:right;">Tiền sản phẩm:</td>
+            <td style="width:160px;text-align:right;">${formatMoney(o.product_subtotal)}</td>
+          </tr>
+          <tr>
+            <td style="text-align:right;">Tiền khuyến mãi:</td>
+            <td style="text-align:right;">- ${formatMoney(o.discount_price)}</td>
+          </tr>
+          <tr>
+            <td style="text-align:right;">Tiền vận chuyển:</td>
+            <td style="text-align:right;">${formatMoney(o.shipping_fee)}</td>
+          </tr>
+          <tr style="font-weight:700;font-size:16px;">
+            <td style="text-align:right;">Tổng tiền:</td>
+            <td style="text-align:right;">${formatMoney(o.total_price)}</td>
+          </tr>
+        </table>
+
+        <p class="muted" style="margin-top:20px;">Hóa đơn không kèm hình ảnh hay đánh giá sản phẩm.</p>
+      </body>
+    </html>
+  `;
+}
+
+function printInvoice() {
+  if (!order.value) return;
+  const html = buildInvoiceHtml();
+  const w = window.open("", "_blank");
+  if (!w) {
+    Swal.fire("Không thể mở cửa sổ in", "Vui lòng cho phép popup/print và thử lại.", "warning");
+    return;
+  }
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+  w.focus();
+  setTimeout(() => {
+    try {
+      w.print();
+    } catch {
+      // ignore
+    }
+  }, 100);
 }
 
 
