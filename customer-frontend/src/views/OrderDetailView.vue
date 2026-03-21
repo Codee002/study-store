@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div>
     <AppHeader :cart-count="cartCount" :user="user" />
 
@@ -9,9 +9,19 @@
             <h1 class="detail-title mb-1">Chi tiết đơn #{{ orderId }}</h1>
             <div class="text-muted small">{{ formatDateTime(order?.created_at) }}</div>
           </div>
-          <RouterLink to="/orders" class="btn btn-outline-secondary">
-            <i class="fa-solid fa-arrow-left me-2"></i>Quay lại danh sách
-          </RouterLink>
+          <div class="d-flex flex-wrap gap-2">
+            <button
+              v-if="order?.status === 'completed'"
+              class="btn btn-main"
+              type="button"
+              @click="printInvoice"
+            >
+              <i class="fa-solid fa-file-pdf me-2"></i>In hóa đơn (PDF)
+            </button>
+            <RouterLink to="/orders" class="btn btn-outline-secondary">
+              <i class="fa-solid fa-arrow-left me-2"></i>Quay lại danh sách
+            </RouterLink>
+          </div>
         </div>
 
         <div v-if="loading" class="empty-box text-center">
@@ -147,10 +157,41 @@
                         <label class="form-label small fw-semibold">Media đã tải</label>
                         <div class="review-media-grid">
                           <template v-for="m in draft.existingMedias" :key="`existing-review-media-${draft.product_id}-${m.id}`">
+                            <div class="review-media-wrapper">
+                              <button class="remove-media-btn" type="button" @click="removeExistingMedia(draft, m)">
+                                <i class="fa-solid fa-xmark"></i>
+                              </button>
+                              <img
+                                v-if="normalizeMediaType(m.type) === 'image'"
+                                :src="m.url"
+                                alt="review-media"
+                                class="review-media-item"
+                              />
+                              <video
+                                v-else
+                                class="review-media-item"
+                                :src="m.url"
+                                controls
+                                preload="metadata"
+                              ></video>
+                            </div>
+                          </template>
+                        </div>
+                      </div>
+
+                      <div v-if="draft.deletedMedias?.length" class="mt-2">
+                        <label class="form-label small fw-semibold text-danger">Media sẽ xóa</label>
+                        <div class="review-media-grid">
+                          <div
+                            v-for="m in draft.deletedMedias"
+                            :key="`deleted-review-media-${draft.product_id}-${m.id}`"
+                            class="review-media-wrapper"
+                          >
+                            <button class="restore-media-btn" type="button" @click="restoreDeletedMedia(draft, m)">Hoàn tác</button>
                             <img
                               v-if="normalizeMediaType(m.type) === 'image'"
                               :src="m.url"
-                              alt="review-media"
+                              alt="review-media-to-delete"
                               class="review-media-item"
                             />
                             <video
@@ -160,7 +201,7 @@
                               controls
                               preload="metadata"
                             ></video>
-                          </template>
+                          </div>
                         </div>
                       </div>
 
@@ -173,9 +214,25 @@
                           accept="image/*,video/*"
                           @change="onReviewFilesChange($event, draft)"
                         />
-                        <div v-if="draft.mediaFiles?.length" class="small text-muted mt-1">
-                          Đã chọn {{ draft.mediaFiles.length }} tệp
+                        <div v-if="draft.mediaPreviews?.length" class="review-media-grid mt-2">
+                          <div
+                            v-for="(preview, idx) in draft.mediaPreviews"
+                            :key="`pending-media-${draft.product_id}-${idx}`"
+                            class="review-media-wrapper"
+                          >
+                            <button class="remove-media-btn" type="button" @click="removePendingMedia(draft, idx)">
+                              <i class="fa-solid fa-xmark"></i>
+                            </button>
+                            <img
+                              v-if="preview.type === 'image'"
+                              :src="preview.url"
+                              alt="preview"
+                              class="review-media-item"
+                            />
+                            <video v-else class="review-media-item" :src="preview.url" controls preload="metadata"></video>
+                          </div>
                         </div>
+                        <div v-else class="small text-muted mt-1">Chưa chọn tệp mới</div>
                       </div>
                       <div v-if="draft.is_evaluated" class="small text-muted mt-2">
                         Có thể chỉnh sửa đánh giá và bấm lưu để cập nhật.
@@ -267,7 +324,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import Swal from "sweetalert2";
 import AppHeader from "@/components/layout/AppHeader.vue";
@@ -347,13 +404,55 @@ function initReviewDrafts() {
     rating: Number(row?.evaluate?.rating || 0),
     content: row?.evaluate?.content ? String(row.evaluate.content) : "",
     existingMedias: Array.isArray(row?.evaluate?.medias) ? row.evaluate.medias : [],
+    deletedMediaIds: [],
+    deletedMedias: [],
     mediaFiles: [],
+    mediaPreviews: [],
   }));
 }
 
 function onReviewFilesChange(event, draft) {
+  revokePreviewUrls(draft.mediaPreviews);
   const files = Array.from(event?.target?.files || []);
   draft.mediaFiles = files;
+  draft.mediaPreviews = files.map((file) => ({
+    url: URL.createObjectURL(file),
+    type: normalizeMediaType(file.type),
+  }));
+}
+
+function removePendingMedia(draft, index) {
+  const previews = Array.isArray(draft.mediaPreviews) ? [...draft.mediaPreviews] : [];
+  const files = Array.isArray(draft.mediaFiles) ? [...draft.mediaFiles] : [];
+  const preview = previews[index];
+  if (preview?.url) URL.revokeObjectURL(preview.url);
+  previews.splice(index, 1);
+  files.splice(index, 1);
+  draft.mediaPreviews = previews;
+  draft.mediaFiles = files;
+}
+
+function removeExistingMedia(draft, media) {
+  const mediaId = Number(media?.id || 0);
+  if (!mediaId) return;
+  const existingIds = Array.isArray(draft.deletedMediaIds) ? draft.deletedMediaIds : [];
+  draft.deletedMediaIds = Array.from(new Set([...existingIds, mediaId]));
+  draft.deletedMedias = Array.isArray(draft.deletedMedias) ? [...draft.deletedMedias, media] : [media];
+  draft.existingMedias = (draft.existingMedias || []).filter((m) => Number(m?.id || 0) !== mediaId);
+}
+
+function restoreDeletedMedia(draft, media) {
+  const mediaId = Number(media?.id || 0);
+  if (!mediaId) return;
+  draft.deletedMediaIds = (draft.deletedMediaIds || []).filter((id) => Number(id) !== mediaId);
+  draft.deletedMedias = (draft.deletedMedias || []).filter((m) => Number(m?.id || 0) !== mediaId);
+  draft.existingMedias = Array.isArray(draft.existingMedias) ? [...draft.existingMedias, media] : [media];
+}
+
+function revokePreviewUrls(previews = []) {
+  previews.forEach((p) => {
+    if (p?.url) URL.revokeObjectURL(p.url);
+  });
 }
 
 async function fetchMe() {
@@ -467,6 +566,7 @@ async function submitOrderReview() {
       rating: Number(r.rating || 0),
       content: String(r.content || "").trim(),
       media_files: Array.isArray(r.mediaFiles) ? r.mediaFiles : [],
+      delete_media_ids: Array.isArray(r.deletedMediaIds) ? r.deletedMediaIds : [],
     }));
 
     const res = await orderService.submitMyOrderEvaluate(orderId.value, payload);
@@ -481,9 +581,120 @@ async function submitOrderReview() {
   }
 }
 
+function buildInvoiceHtml() {
+  if (!order.value) return "";
+  const o = order.value;
+  const rows = (o.items || [])
+    .map(
+      (item, idx) => `
+        <tr>
+          <td style="padding:6px 8px;border:1px solid #ddd;">${idx + 1}</td>
+          <td style="padding:6px 8px;border:1px solid #ddd;">${item.name}</td>
+          <td style="padding:6px 8px;border:1px solid #ddd;">${item.color_name || ""}</td>
+          <td style="padding:6px 8px;border:1px solid #ddd;text-align:right;">${item.quantity}</td>
+          <td style="padding:6px 8px;border:1px solid #ddd;text-align:right;">${formatVnd(item.unit_price)}</td>
+          <td style="padding:6px 8px;border:1px solid #ddd;text-align:right;">${formatVnd(item.line_total)}</td>
+        </tr>`
+    )
+    .join("");
+
+  const delivery = o.delivery_info || {};
+  const payment = o.payment || {};
+
+  return `
+    <html>
+      <head>
+        <title>Hóa đơn #${orderId.value}</title>
+        <style>
+          body { font-family: Arial, sans-serif; padding: 24px; color: #111; }
+          h1 { margin: 0 0 8px; }
+          .muted { color: #666; font-size: 13px; }
+          table { border-collapse: collapse; width: 100%; margin-top: 12px; }
+          .totals td { padding: 6px 8px; }
+        </style>
+      </head>
+      <body>
+        <h1>Hóa đơn bán hàng</h1>
+        <div class="muted">Mã đơn: #${orderId.value} | Ngày: ${formatDateTime(o.created_at)}</div>
+        <hr />
+        <h3>Khách hàng</h3>
+        <div>${user.value?.name || "-"}</div>
+        <div class="muted">${user.value?.email || "-"}</div>
+        <h3 style="margin-top:12px;">Giao hàng</h3>
+        <div>${delivery.name || "-"}</div>
+        <div>${delivery.phone || "-"}</div>
+        <div class="muted">${delivery.address || "-"}</div>
+        <h3 style="margin-top:12px;">Thanh toán</h3>
+        <div>${payment.name || "-"}</div>
+
+        <h3 style="margin-top:16px;">Chi tiết đơn hàng</h3>
+        <table>
+          <thead>
+            <tr style="background:#f4f4f4;">
+              <th style="padding:6px 8px;border:1px solid #ddd;text-align:left;">#</th>
+              <th style="padding:6px 8px;border:1px solid #ddd;text-align:left;">Sản phẩm</th>
+              <th style="padding:6px 8px;border:1px solid #ddd;text-align:left;">Phân loại</th>
+              <th style="padding:6px 8px;border:1px solid #ddd;text-align:right;">SL</th>
+              <th style="padding:6px 8px;border:1px solid #ddd;text-align:right;">Đơn giá</th>
+              <th style="padding:6px 8px;border:1px solid #ddd;text-align:right;">Thành tiền</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+
+        <table class="totals" style="width:100%; margin-top:12px;">
+          <tr>
+            <td style="text-align:right;">Tiền sản phẩm:</td>
+            <td style="width:160px;text-align:right;">${formatVnd(o.product_subtotal)}</td>
+          </tr>
+          <tr>
+            <td style="text-align:right;">Tiền khuyến mãi:</td>
+            <td style="text-align:right;">- ${formatVnd(o.discount_price)}</td>
+          </tr>
+          <tr>
+            <td style="text-align:right;">Tiền vận chuyển:</td>
+            <td style="text-align:right;">${formatVnd(o.shipping_fee)}</td>
+          </tr>
+          <tr style="font-weight:700;font-size:16px;">
+            <td style="text-align:right;">Tổng tiền:</td>
+            <td style="text-align:right;">${formatVnd(o.total_price)}</td>
+          </tr>
+        </table>
+
+        <p class="muted" style="margin-top:20px;">Hóa đơn không kèm hình ảnh hay đánh giá sản phẩm.</p>
+      </body>
+    </html>
+  `;
+}
+
+function printInvoice() {
+  if (!order.value) return;
+  const html = buildInvoiceHtml();
+  const w = window.open("", "_blank");
+  if (!w) {
+    Swal.fire("Không thể mở cửa sổ in", "Vui lòng cho phép popup/print và thử lại.", "warning");
+    return;
+  }
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+  w.focus();
+  setTimeout(() => {
+    try {
+      w.print();
+    } catch {
+      // ignore
+    }
+  }, 100);
+}
+
 onMounted(async () => {
   await fetchMe();
   await Promise.all([loadCartCount(), loadOrder()]);
+});
+
+onBeforeUnmount(() => {
+  reviewDrafts.value.forEach((draft) => revokePreviewUrls(draft.mediaPreviews || []));
 });
 </script>
 
@@ -648,6 +859,40 @@ onMounted(async () => {
   border-radius: 10px;
   border: 1px solid var(--border-color);
   background: #000;
+}
+
+.review-media-wrapper {
+  position: relative;
+}
+
+.restore-media-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.remove-media-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
 }
 
 .star-btn {
