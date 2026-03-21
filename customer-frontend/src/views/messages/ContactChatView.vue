@@ -52,10 +52,21 @@
               </div>
 
               <div class="chat-row" :class="message.sender === 'me' ? 'from-me' : 'from-them'">
-                <div class="bubble">
-                  <div class="bubble-text" v-if="message.text">{{ message.text }}</div>
+                <div class="bubble" :class="{ recalled: message.type === 'recalled' }">
+                  <div v-if="message.sender === 'me' && message.type !== 'recalled'" class="msg-actions left">
+                    <button class="icon-btn" @click.stop="toggleMenu(message.id)">
+                      <i class="fa-solid fa-ellipsis-vertical"></i>
+                    </button>
+                    <div v-if="openMenuId === message.id" class="dropdown-menu show">
+                      <button class="dropdown-item" @click.stop="recall(message)">Thu hồi</button>
+                    </div>
+                  </div>
+                  <div class="bubble-text" v-if="message.type === 'recalled'">
+                    <i class="fa-regular fa-circle-xmark me-1"></i> Tin nhắn đã bị thu hồi
+                  </div>
+                  <div class="bubble-text" v-else-if="message.text">{{ message.text }}</div>
 
-                  <div v-if="message.attachments?.length" class="attach-grid">
+                  <div v-if="message.attachments?.length && message.type !== 'recalled'" class="attach-grid">
                     <a
                       v-for="file in message.attachments"
                       :key="file.id"
@@ -74,16 +85,15 @@
                         <i v-if="file.type === 'pdf'" class="fa-regular fa-file-pdf"></i>
                         <i v-else class="fa-regular fa-file-lines"></i>
                       </div>
-                      <div class="attach-name text-truncate" :title="file.name">
-                        {{ file.name }}
-                      </div>
                     </a>
                   </div>
 
                   <div class="meta small opacity-75 d-flex gap-2 align-items-center">
                     <span>{{ formatTime(message.time) }}</span>
-                    <span v-if="message.sender === 'me'">
-                      <i class="fa-solid fa-check-double text-primary"></i>
+                    <span
+                      v-if="message.sender === 'me' && message.id === lastOwnMessageId && message.is_read_by_partner"
+                    >
+                      Đã xem
                     </span>
                   </div>
                 </div>
@@ -158,7 +168,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import dayjs from "dayjs";
 import AppHeader from "@/components/layout/AppHeader.vue";
@@ -167,6 +177,7 @@ import MessageService from "@/services/message.service";
 
 const route = useRoute();
 const router = useRouter();
+const CHAT_SEEN_KEY = "customer_chat_seen_at";
 const draft = ref("");
 const messages = ref([]);
 const pendingFiles = ref([]);
@@ -177,11 +188,28 @@ const loading = ref(true);
 const error = ref("");
 const sending = ref(false);
 const currentUserId = ref(getCurrentUserId());
+const channelName = computed(() =>
+  currentUserId.value ? `user.${currentUserId.value}` : null
+);
+let echoChannel = null;
+const openMenuId = ref(null);
 
 const orderedMessages = computed(() =>
   [...messages.value].sort((a, b) => new Date(a.time) - new Date(b.time))
 );
 const canSend = computed(() => draft.value.trim() || pendingFiles.value.length);
+const lastOwnMessageId = computed(() => {
+  for (let i = orderedMessages.value.length - 1; i >= 0; i -= 1) {
+    const m = orderedMessages.value[i];
+    if (m.sender === "me") return m.id;
+  }
+  return null;
+});
+// Tự cuộn khi tổng số tin thay đổi
+watch(
+  () => messages.value.length,
+  () => nextTick(() => scrollToBottom()),
+);
 
 function getCurrentUserId() {
   try {
@@ -203,13 +231,42 @@ function mapMedia(media) {
 }
 
 function mapMessage(raw) {
+  const readIds = raw.read_by_user_ids || [];
+  const partnerId = conversation.value?.admin?.id;
   return {
     id: raw.id,
     sender: raw.user_id === currentUserId.value ? "me" : "them",
     text: raw.content,
     time: raw.created_at,
+    type: raw.type,
+    is_read: raw.is_read ?? readIds.includes(currentUserId.value),
+    is_read_by_partner: partnerId ? readIds.includes(partnerId) : false,
     attachments: (raw.medias || []).map(mapMedia),
   };
+}
+
+function mapIncoming(raw) {
+  const readIds = raw.read_by_user_ids || [];
+  const partnerId = conversation.value?.admin?.id;
+  return {
+    id: raw.id,
+    sender: raw.user_id === currentUserId.value ? "me" : "them",
+    text: raw.content,
+    time: raw.created_at,
+    type: raw.type,
+    is_read: raw.is_read ?? readIds.includes(currentUserId.value) ?? (raw.user_id === currentUserId.value),
+    is_read_by_partner: partnerId ? readIds.includes(partnerId) : false,
+    attachments: (raw.medias || []).map(mapMedia),
+  };
+}
+
+function upsertMessage(msg) {
+  const idx = messages.value.findIndex((m) => m.id === msg.id);
+  if (idx !== -1) {
+    messages.value[idx] = msg;
+  } else {
+    messages.value.push(msg);
+  }
 }
 
 async function loadMessages(conversationId) {
@@ -217,6 +274,7 @@ async function loadMessages(conversationId) {
   messages.value = (res?.messages || []).map(mapMessage);
   await nextTick();
   scrollToBottom();
+  markMessagesSeen();
 }
 
 async function bootstrap() {
@@ -233,6 +291,7 @@ async function bootstrap() {
 
     if (convId) {
       await loadMessages(convId);
+       startRealtime();
     } else {
       error.value = "Không tìm thấy cuộc trò chuyện với admin.";
     }
@@ -356,6 +415,28 @@ async function send() {
   }
 }
 
+async function recall(message) {
+  if (!conversation.value || message.sender !== "me" || message.type === "recalled") return;
+  openMenuId.value = null;
+  // Update UI ngay lập tức
+  upsertMessage({
+    ...message,
+    text: null,
+    attachments: [],
+    type: "recalled",
+  });
+  try {
+    await MessageService.recallMessage(conversation.value.id, message.id);
+  } catch (e) {
+    error.value =
+      e?.response?.data?.message || e?.message || "Không thu hồi được tin nhắn.";
+  }
+}
+
+function toggleMenu(id) {
+  openMenuId.value = openMenuId.value === id ? null : id;
+}
+
 function removePending(id) {
   const target = pendingFiles.value.find((f) => f.id === id);
   if (target?.previewUrl) {
@@ -364,13 +445,51 @@ function removePending(id) {
   pendingFiles.value = pendingFiles.value.filter((f) => f.id !== id);
 }
 
+function stopRealtime() {
+  if (channelName.value && window.Echo) {
+    window.Echo.leave(channelName.value);
+  }
+  echoChannel = null;
+}
+
+function handleIncomingMessage(event) {
+  if (!event?.conversation_id) return;
+  if (event.user_id === currentUserId.value) {
+    messages.value = messages.value.filter((m) => m.status !== "sending");
+    return;
+  }
+  if (String(event.conversation_id) !== String(conversation.value?.id)) return;
+  const normalized = mapIncoming(event);
+  upsertMessage(normalized);
+  nextTick(scrollToBottom);
+  markMessagesSeen();
+}
+
+function startRealtime() {
+  console.log(channelName.value)
+  if (!channelName.value || !window.Echo) return;
+  stopRealtime();
+  echoChannel = window.Echo.private(channelName.value).listen(
+    ".MessageSent",
+    handleIncomingMessage
+  );
+}
+
 function scrollToBottom() {
   const el = scrollBody.value;
   if (!el) return;
-  el.scrollTop = el.scrollHeight;
+  requestAnimationFrame(() => {
+    el.scrollTop = el.scrollHeight;
+  });
+}
+
+function markMessagesSeen() {
+  localStorage.setItem(CHAT_SEEN_KEY, new Date().toISOString());
+  window.dispatchEvent(new CustomEvent("customer-messages-read"));
 }
 
 onMounted(bootstrap);
+onBeforeUnmount(stopRealtime);
 watch(
   () => route.params.id,
   () => bootstrap()
@@ -378,44 +497,51 @@ watch(
 </script>
 
 <style scoped>
+main.container {
+  max-width: 100%;
+  padding: 0 14px 22px;
+}
 .chat-shell {
+  width: 100%;
+  height: calc(100vh - 140px);
+  border-radius: 18px;
   background: var(--main-extra-bg);
   border: 1px solid var(--border-color);
-  border-radius: 16px;
-  min-height: 70vh;
-  max-width: 960px;
-  margin: 0 auto;
-  height: calc(100vh - 160px);
+  box-shadow: 0 12px 28px color-mix(in srgb, #000 10%, transparent);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 .chat-header {
   padding: 14px 16px;
   border-bottom: 1px solid var(--border-color);
+  background: color-mix(in srgb, var(--primary) 12%, var(--main-extra-bg));
+  color: var(--font-color);
 }
 .avatar {
   width: 44px;
   height: 44px;
-  border-radius: 50%;
+  border-radius: 12px;
   object-fit: cover;
-  border: 1px solid var(--border-color);
+  border: 1px solid color-mix(in srgb, var(--primary) 25%, var(--border-color));
 }
 .avatar.placeholder {
   display: grid;
   place-items: center;
-  background: color-mix(in srgb, var(--border-color) 30%, transparent);
-  color: var(--font-color);
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+  color: var(--primary);
 }
 .chat-body {
   flex: 1;
-  padding: 14px 16px;
   overflow: auto;
+  padding: 16px 18px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  background: radial-gradient(circle at 20% 20%, color-mix(in srgb, var(--primary) 4%, transparent), transparent 30%),
-    radial-gradient(circle at 80% 40%, color-mix(in srgb, var(--success) 4%, transparent), transparent 28%),
-    var(--hover-background-color);
+  gap: 12px;
+  background: #ffffff;
+}
+.empty {
+  margin-top: 40px;
 }
 .time-chip {
   margin: 8px auto;
@@ -423,51 +549,57 @@ watch(
   border-radius: 20px;
   background: color-mix(in srgb, var(--border-color) 30%, transparent);
   width: fit-content;
-  font-size: 0.8rem;
-  color: var(--font-color);
 }
 .chat-row {
   display: flex;
 }
-.from-me {
+.chat-row.from-me {
   justify-content: flex-end;
 }
-.from-them {
+.chat-row.from-them {
   justify-content: flex-start;
 }
 .bubble {
-  max-width: min(640px, 80%);
-  background: var(--hover-background-color);
-  border: 1px solid var(--border-color);
-  border-radius: 16px;
-  padding: 10px 12px;
-  box-shadow: 0 8px 24px color-mix(in srgb, #000 6%, transparent);
+  position: relative;
+  max-width: 78%;
+  background: #ffffff;
+  border: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
+  border-radius: 18px;
+  padding: 12px 14px 10px;
+  box-shadow: 0 6px 18px color-mix(in srgb, #000 8%, transparent);
 }
 .from-me .bubble {
-  background: color-mix(in srgb, var(--primary) 18%, transparent);
-  border-color: color-mix(in srgb, var(--primary) 30%, transparent);
+  background: #ffddba;
+  border-color: color-mix(in srgb, #f59e0b 35%, #ffddba);
+}
+.bubble.recalled {
+  font-style: italic;
+  color: #9ca3af;
+  background: #f9fafb;
+  border-style: dashed;
 }
 .bubble-text {
   white-space: pre-line;
   line-height: 1.45;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 .attach-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 8px;
+  display: flex;
+  gap: 10px;
   margin-bottom: 6px;
+  flex-wrap: wrap;
 }
 .attach-card {
   border: 1px dashed var(--border-color);
   border-radius: 12px;
   padding: 8px 10px;
-  background: color-mix(in srgb, var(--main-extra-bg) 80%, transparent);
-  display: flex;
+  background: var(--hover-background-color);
+  display: inline-flex;
   align-items: center;
   gap: 8px;
   color: inherit;
   text-decoration: none;
+  min-width: 120px;
 }
 .attach-media {
   width: 72px;
@@ -486,12 +618,13 @@ watch(
   object-fit: cover;
 }
 .attach-thumb {
-  width: 32px;
-  height: 32px;
-  border-radius: 10px;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
   display: grid;
   place-items: center;
-  color: var(--font-color);
+  background: color-mix(in srgb, var(--border-color) 20%, transparent);
+  font-size: 18px;
 }
 .attach-thumb.image {
   background: color-mix(in srgb, var(--primary) 10%, transparent);
@@ -502,8 +635,8 @@ watch(
 .attach-thumb.pdf {
   background: color-mix(in srgb, #ef4444 14%, transparent);
 }
-.attach-thumb.file {
-  background: color-mix(in srgb, var(--border-color) 35%, transparent);
+.attach-thumb.excel {
+  background: color-mix(in srgb, #16a34a 14%, transparent);
 }
 .attach-name {
   flex: 1;
@@ -515,14 +648,17 @@ watch(
   justify-content: flex-start;
 }
 .chat-input {
-  padding: 12px 14px;
+  padding: 14px 16px;
   border-top: 1px solid var(--border-color);
   background: var(--main-extra-bg);
+  position: sticky;
+  bottom: 0;
 }
 .chat-input .form-control {
-  background: var(--hover-background-color);
-  border: 1px solid var(--border-color);
+  background: #ffffff;
+  border: 1px solid color-mix(in srgb, var(--border-color) 70%, transparent);
   resize: none;
+  color: var(--font-color);
 }
 .chat-input.disabled {
   opacity: 0.6;
@@ -562,17 +698,56 @@ watch(
 .pending-pill .btn-link {
   line-height: 1;
 }
+.msg-actions {
+  position: absolute;
+  top: 8px;
+  left: -38px;
+}
+.msg-actions.left .dropdown-menu {
+  left: 0;
+  top: 28px;
+}
+.icon-btn {
+  border: 1px solid color-mix(in srgb, var(--border-color) 50%, transparent);
+  background: #ffddba;
+  border-radius: 10px;
+  padding: 4px 6px;
+  color: var(--font-color);
+}
+.dropdown-menu {
+  position: absolute;
+  min-width: 120px;
+  background: #ffffff;
+  border: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
+  border-radius: 10px;
+  padding: 6px 0;
+  box-shadow: 0 10px 24px color-mix(in srgb, #000 10%, transparent);
+  z-index: 5;
+}
+.dropdown-item {
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  color: var(--font-color);
+}
+.dropdown-item:hover {
+  background: var(--hover-background-color);
+}
 @media (max-width: 768px) {
+  main.container {
+    padding: 0 10px 18px;
+  }
+  .chat-shell {
+    height: calc(100vh - 120px);
+    border-radius: 16px;
+  }
   .bubble {
     max-width: 100%;
   }
   .attach-grid {
     grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  }
-  .chat-shell {
-    height: auto;
-    min-height: 75vh;
-    max-width: 100%;
   }
 }
 </style>
