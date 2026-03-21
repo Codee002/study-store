@@ -9,9 +9,27 @@
             <h1 class="cart-title mb-1">Giỏ hàng của bạn</h1>
             <div class="text-muted small">{{ items.length }} sản phẩm</div>
           </div>
-          <RouterLink to="/products" class="btn btn-outline-secondary">
-            <i class="fa-solid fa-arrow-left me-2"></i>Tiếp tục mua sắm
-          </RouterLink>
+          <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
+            <button
+              class="btn btn-outline-secondary"
+              type="button"
+              :disabled="!items.length || isAllSelected"
+              @click="selectAll"
+            >
+              <i class="fa-regular fa-square-check me-2"></i>Chọn tất cả
+            </button>
+            <button
+              class="btn btn-outline-secondary"
+              type="button"
+              :disabled="!selectedKeys.length"
+              @click="clearSelection"
+            >
+              <i class="fa-regular fa-circle-xmark me-2"></i>Hủy chọn tất cả
+            </button>
+            <RouterLink to="/products" class="btn btn-outline-secondary">
+              <i class="fa-solid fa-arrow-left me-2"></i>Tiếp tục mua sắm
+            </RouterLink>
+          </div>
         </div>
 
         <div v-if="!items.length" class="empty-box text-center">
@@ -194,6 +212,10 @@ const selectedQuantity = computed(() =>
 const selectedSubtotal = computed(() =>
   selectedItems.value.reduce((sum, it) => sum + Number(it.subtotal || 0), 0),
 );
+const allItemKeys = computed(() => items.value.map((it) => it.key));
+const isAllSelected = computed(
+  () => allItemKeys.value.length > 0 && selectedKeys.value.length === allItemKeys.value.length,
+);
 
 function buildKey(item) {
   if (item?.id) return `detail-${String(item.id)}`;
@@ -228,6 +250,14 @@ async function loadCart({ silent = true } = {}) {
   if (selectedKeys.value.length === 0 && existingKeys.size > 0) {
     selectedKeys.value = Array.from(existingKeys);
   }
+}
+
+function selectAll() {
+  selectedKeys.value = [...allItemKeys.value];
+}
+
+function clearSelection() {
+  selectedKeys.value = [];
 }
 
 function mapDetailToEditProduct(raw, currentItem) {
