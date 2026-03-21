@@ -28,8 +28,8 @@
           <div class="mini-card">
             <i class="fa-solid fa-truck-fast"></i>
             <div>
-              <div class="fw-bold">T</div>
-              <div class="text-muted small">T</div>
+              <div class="fw-bold">Giao hàng nhanh</div>
+              <div class="text-muted small">Giao hàng trong 24 giờ</div>
             </div>
           </div>
         </div>
@@ -37,8 +37,8 @@
           <div class="mini-card">
             <i class="fa-solid fa-tags"></i>
             <div>
-              <div class="fw-bold">T</div>
-              <div class="text-muted small">T</div>
+              <div class="fw-bold">Giá tốt nhất</div>
+              <div class="text-muted small">Giá cả cạnh tranh</div>
             </div>
           </div>
         </div>
@@ -46,8 +46,8 @@
           <div class="mini-card">
             <i class="fa-solid fa-shield"></i>
             <div>
-              <div class="fw-bold">T</div>
-              <div class="text-muted small">T</div>
+              <div class="fw-bold">Bảo vệ người tiêu dùng</div>
+              <div class="text-muted small">Cam kết chất lượng</div>
             </div>
           </div>
         </div>
