@@ -107,7 +107,7 @@
                   <!-- Product count (fake for now) -->
                   <td class="text-end">
                     <span class="badge count-badge">
-                      {{ r?.items_count ?? 8 }}
+                      {{ r?.items_count ?? 0 }}
                     </span>
                   </td>
 

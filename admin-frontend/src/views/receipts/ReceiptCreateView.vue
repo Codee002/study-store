@@ -169,7 +169,8 @@
                                           idx,
                                           e.target.value,
                                           setFieldValue,
-                                          setFieldTouched
+                                          setFieldTouched,
+                                          values
                                         );
                                       }
                                     "
@@ -211,7 +212,12 @@
                                 :class="{
                                   'is-invalid': meta.touched && errors.length,
                                 }"
-                                @change="handleChange"
+                                @change="
+                                  (e) => {
+                                    handleChange(e);
+                                    onColorSelect(idx, e.target.value, values);
+                                  }
+                                "
                               >
                                 <!-- Có màu => bắt buộc chọn -->
                                 <option
@@ -268,6 +274,33 @@
                               :name="`items[${idx}].quantity`"
                               class="invalid-feedback d-block"
                             />
+                            <div
+                              class="small mt-1 text-muted"
+                              v-if="stockHints[idx]?.loading"
+                            >
+                              Đang lấy tồn kho...
+                            </div>
+                            <div
+                              class="small mt-1 text-success"
+                              v-else-if="stockHints[idx]?.data"
+                            >
+                              <div>
+                                Tồn tổng: {{ stockHints[idx].data.total_quantity }}
+                              </div>
+                              <div
+                                v-if="stockHints[idx].data.color_quantity !== null"
+                              >
+                                Màu
+                                {{ stockHints[idx].data.color_name || "đang chọn" }}:
+                                {{ stockHints[idx].data.color_quantity }}
+                              </div>
+                            </div>
+                            <div
+                              class="small mt-1 text-danger"
+                              v-else-if="stockHints[idx]?.error"
+                            >
+                              {{ stockHints[idx].error }}
+                            </div>
                           </td>
 
                           <!-- UNIT PRICE -->
@@ -282,30 +315,66 @@
                                 min="1"
                                 step="1"
                                 inputmode="numeric"
-                                class="form-control bg-transparent"
-                                :class="{
-                                  'is-invalid': meta.touched && errors.length,
-                                }"
-                                @input="handleChange"
-                              />
-                            </Field>
-                            <ErrorMessage
-                              :name="`items[${idx}].purchase_price`"
-                              class="invalid-feedback d-block"
+                              class="form-control bg-transparent"
+                              :class="{
+                                'is-invalid': meta.touched && errors.length,
+                              }"
+                              @input="handleChange"
                             />
-                          </td>
+                          </Field>
+                          <ErrorMessage
+                            :name="`items[${idx}].purchase_price`"
+                            class="invalid-feedback d-block"
+                          />
+                          <div
+                            class="small mt-1 text-muted"
+                            v-if="purchaseHints[idx]?.loading"
+                          >
+                            Đang lấy giá nhập trước đó...
+                          </div>
+                          <div
+                            class="small mt-1 text-success"
+                            v-else-if="
+                              purchaseHints[idx]?.data?.total_entries > 0 &&
+                              purchaseHints[idx]?.data?.avg_purchase_price >= 0
+                            "
+                          >
+                            Giá nhập TB:
+                            {{ formatMoney(purchaseHints[idx].data.avg_purchase_price) }}
+                            <br v-if="purchaseHints[idx].data.last_purchase_price" />
+                            <span v-if="purchaseHints[idx].data.last_purchase_price">
+                              Lần gần nhất:
+                              {{ formatMoney(purchaseHints[idx].data.last_purchase_price) }}
+                            </span>
+                            <span class="opacity-75">
+                              ({{ purchaseHints[idx].data.total_entries }} phiếu)
+                            </span>
+                          </div>
+                          <div
+                            class="small mt-1 text-warning"
+                            v-else-if="purchaseHints[idx]?.data?.total_entries === 0"
+                          >
+                            Chưa có phiếu nhập hoàn tất cho sản phẩm này
+                          </div>
+                          <div
+                            class="small mt-1 text-danger"
+                            v-else-if="purchaseHints[idx]?.error"
+                          >
+                            {{ purchaseHints[idx].error }}
+                          </div>
+                        </td>
 
-                          <!-- ACTIONS -->
-                          <td class="text-end">
-                            <button
-                              type="button"
-                              class="btn btn-outline-danger btn-sm"
-                              @click="remove(idx)"
-                              :disabled="isSubmitting || fields.length <= 1"
-                              title="Xóa dòng"
-                            >
-                              <i class="fa-solid fa-trash"></i>
-                            </button>
+                        <!-- ACTIONS -->
+                        <td class="text-end">
+                          <button
+                            type="button"
+                            class="btn btn-outline-danger btn-sm"
+                            @click="onRemoveRow(remove, idx)"
+                            :disabled="isSubmitting || fields.length <= 1"
+                            title="Xóa dòng"
+                          >
+                            <i class="fa-solid fa-trash"></i>
+                          </button>
                           </td>
                         </tr>
                       </tbody>
@@ -401,6 +470,13 @@ const initialValues = {
   ],
 };
 
+const purchaseHints = ref(
+  initialValues.items.map(() => ({ loading: false, data: null, error: null }))
+);
+const stockHints = ref(
+  initialValues.items.map(() => ({ loading: false, data: null, error: null }))
+);
+
 const schema = computed(() =>
   yup.object({
     supplier_id: yup.string().required("Vui lòng chọn nhà cung cấp"),
@@ -458,6 +534,8 @@ function makeRow() {
 
 function addRow(setFieldValue, values) {
   setFieldValue("items", [...values.items, makeRow()]);
+  purchaseHints.value.push({ loading: false, data: null, error: null });
+  stockHints.value.push({ loading: false, data: null, error: null });
 }
 
 function removeRow(rowKey, setFieldValue, values) {
@@ -469,6 +547,20 @@ function resetAll(setFieldValue) {
   setFieldValue("supplier_id", "");
   setFieldValue("warehouse_id", "");
   setFieldValue("items", JSON.parse(JSON.stringify(initialValues.items)));
+  purchaseHints.value = [
+    {
+      loading: false,
+      data: null,
+      error: null,
+    },
+  ];
+  stockHints.value = [
+    {
+      loading: false,
+      data: null,
+      error: null,
+    },
+  ];
 }
 
 function findProductById(productId) {
@@ -489,11 +581,121 @@ function getProductThumb(productId) {
   return first || "";
 }
 
-function onProductSelect(idx, productId, setFieldValue) {
+function ensurePurchaseHint(idx) {
+  while (purchaseHints.value.length <= idx) {
+    purchaseHints.value.push({ loading: false, data: null, error: null });
+  }
+}
+
+function setPurchaseHint(idx, payload) {
+  ensurePurchaseHint(idx);
+  purchaseHints.value[idx] = payload;
+}
+
+function ensureStockHint(idx) {
+  while (stockHints.value.length <= idx) {
+    stockHints.value.push({ loading: false, data: null, error: null });
+  }
+}
+
+function setStockHint(idx, payload) {
+  ensureStockHint(idx);
+  stockHints.value[idx] = payload;
+}
+
+async function updatePurchaseHint(idx, productId, colorId) {
+  ensurePurchaseHint(idx);
+
+  if (!productId) {
+    setPurchaseHint(idx, { loading: false, data: null, error: null });
+    return;
+  }
+
+  setPurchaseHint(idx, { ...purchaseHints.value[idx], loading: true, error: null });
+
+  try {
+    const res = await ProductService.getPurchaseStats(productId, {
+      color_id: colorId || undefined,
+    });
+    setPurchaseHint(idx, {
+      loading: false,
+      data: res?.data || null,
+      error: null,
+    });
+  } catch (e) {
+    const msg =
+      e?.response?.data?.message ||
+      e?.response?.data?.error ||
+      "Khong lay duoc gia nhap truoc do";
+    setPurchaseHint(idx, { loading: false, data: null, error: msg });
+  }
+}
+
+async function updateStockHint(idx, productId, colorId) {
+  ensureStockHint(idx);
+
+  if (!productId) {
+    setStockHint(idx, { loading: false, data: null, error: null });
+    return;
+  }
+
+  setStockHint(idx, { ...stockHints.value[idx], loading: true, error: null });
+
+  try {
+    const res = await ProductService.get(productId);
+    const summary = res?.stock_summary || null;
+    let colorStock = null;
+    if (summary && colorId) {
+      colorStock =
+        (summary.colors || []).find(
+          (c) => String(c.color_id) === String(colorId)
+        ) || null;
+    }
+
+    setStockHint(idx, {
+      loading: false,
+      data: {
+        total_quantity: summary?.total_quantity ?? 0,
+        color_quantity: colorStock?.quantity ?? null,
+        color_name: colorStock?.color_name ?? null,
+      },
+      error: null,
+    });
+  } catch (e) {
+    const msg =
+      e?.response?.data?.message ||
+      e?.response?.data?.error ||
+      "Khong lay duoc ton kho";
+    setStockHint(idx, { loading: false, data: null, error: msg });
+  }
+}
+
+function onProductSelect(idx, productId, setFieldValue, setFieldTouched, values) {
   setFieldValue(`items[${idx}].product_id`, productId);
 
   // reset color khi đổi sản phẩm
   setFieldValue(`items[${idx}].color_id`, "");
+
+  updatePurchaseHint(idx, productId, null);
+  updateStockHint(idx, productId, null);
+}
+
+function onColorSelect(idx, colorId, values) {
+  const productId = values.items?.[idx]?.product_id;
+  updatePurchaseHint(idx, productId, colorId);
+  updateStockHint(idx, productId, colorId);
+}
+
+function onRemoveRow(remove, idx) {
+  remove(idx);
+  purchaseHints.value.splice(idx, 1);
+  if (!purchaseHints.value.length) {
+    purchaseHints.value.push({ loading: false, data: null, error: null });
+  }
+  stockHints.value.splice(idx, 1);
+  if (!stockHints.value.length) {
+    stockHints.value.push({ loading: false, data: null, error: null });
+  }
 }
 
 function getRowError(errors, idx, field) {
