@@ -78,7 +78,7 @@
               </thead>
 
               <tbody v-if="items.length">
-                <tr v-for="s in items" :key="s.id">
+                <tr v-for="s in items" :key="s.id" class="row-click" @click="goDetail(s.id)">
                   <td class="ps-3">
                     <span class="code-pill">S{{ s.id }}</span>
                   </td>
@@ -98,7 +98,7 @@
                   </td>
 
                   <td class="text-end pe-3">
-                    <div class="d-flex justify-content-end gap-2">
+                    <div class="d-flex justify-content-end gap-2" @click.stop>
                       <RouterLink
                         class="icon-btn icon-edit"
                         :to="{ name: 'suppliers.edit', params: { id: s.id } }"
@@ -176,6 +176,7 @@
 <script setup>
 import { computed, ref, watch, onMounted } from "vue";
 import Swal from "sweetalert2";
+import { useRouter } from "vue-router";
 import SupplierService from "@/services/supplier.service";
 
 const keyword = ref("");
@@ -185,6 +186,7 @@ const perPage = 8;
 const meta = ref({ current_page: 1, per_page: 10, total: 0, last_page: 1 });
 const items = ref([]);
 const loading = ref(false);
+const router = useRouter();
 
 async function fetchSuppliers() {
   loading.value = true;
@@ -256,6 +258,10 @@ async function onDeleteClick(id) {
     });
   }
 }
+
+function goDetail(id) {
+  router.push({ name: "suppliers.detail", params: { id } });
+}
 </script>
 
 <style scoped>
@@ -307,5 +313,11 @@ async function onDeleteClick(id) {
 }
 .icon-delete {
   color: #ef4444;
+}
+.row-click {
+  cursor: pointer;
+}
+.row-click:hover {
+  background: var(--hover-background-color);
 }
 </style>
