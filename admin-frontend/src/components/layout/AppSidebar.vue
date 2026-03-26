@@ -65,7 +65,7 @@
 
       <RouterLink
         class="nav-link"
-        :class="{ active: route.name?.toString().startsWith('orders.') }"
+        :class="{ active: route.name?.toString().startsWith('prices.') }"
         :to="{
           name: 'prices.lookup',
         }"
@@ -103,7 +103,7 @@
 
       <RouterLink
         class="nav-link"
-        :class="{ active: route.name?.toString().startsWith('promotions.') }"
+        :class="{ active: route.name?.toString().startsWith('discounts.') }"
         to="/discounts"
       >
         <i class="fa-solid fa-percent me-2"></i>
@@ -113,7 +113,7 @@
       <RouterLink
         class="nav-link"
         :class="{
-          active: route.name?.toString().startsWith('payment-methods.'),
+          active: route.name?.toString().startsWith('payments.'),
         }"
         to="/payments"
       >
@@ -137,15 +137,6 @@
       >
         <i class="fa-solid fa-chart-line me-2"></i>
         <span v-if="!collapsed">Thống kê</span>
-      </RouterLink>
-
-      <RouterLink
-        class="nav-link"
-        :class="{ active: route.name?.toString().startsWith('messages.') }"
-        to="/messages"
-      >
-        <i class="fa-solid fa-comments me-2"></i>
-        <span v-if="!collapsed">Liên hệ</span>
       </RouterLink>
 
       <div class="nav-link" role="button" @click="onLogout()">
