@@ -1,15 +1,28 @@
 <template>
   <div>
-    <AppHeader :cart-count="cartCount" :user="user" />
 
     <main class="container py-4">
       <section class="cart-shell">
+        <div v-if="loading" class="empty-box text-center">
+          <i class="fa-solid fa-spinner fa-spin empty-icon"></i>
+          <p class="mb-0 text-muted">Đang tải giỏ hàng...</p>
+        </div>
+
+        <template v-else>
         <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
           <div>
             <h1 class="cart-title mb-1">Giỏ hàng của bạn</h1>
             <div class="text-muted small">{{ items.length }} sản phẩm</div>
           </div>
           <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
+            <button
+              class="btn btn-outline-danger"
+              type="button"
+              :disabled="!items.length"
+              @click="clearCart"
+            >
+              <i class="fa-solid fa-trash me-2"></i>Xóa tất cả
+            </button>
             <button
               class="btn btn-outline-secondary"
               type="button"
@@ -49,6 +62,7 @@
                   class="form-check-input"
                   type="checkbox"
                   :value="item.key"
+                  :disabled="!item.canCheckout"
                 />
               </div>
 
@@ -61,6 +75,9 @@
                   <span class="chip">Phân loại: {{ item.colorName }}</span>
                   <span class="chip">Số lượng: {{ item.quantity }}</span>
                   <span class="chip">Mốc giá: >= {{ item.minQuantity }}</span>
+                </div>
+                <div v-if="item.availabilityMessage" class="small mt-2" :class="item.canCheckout ? 'text-success' : 'text-danger'">
+                  {{ item.availabilityMessage }}
                 </div>
               </div>
 
@@ -122,6 +139,7 @@
             </aside>
           </div>
         </div>
+        </template>
       </section>
     </main>
 
@@ -143,7 +161,6 @@
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import Swal from "sweetalert2";
-import AppHeader from "@/components/layout/AppHeader.vue";
 import AppFooter from "@/components/layout/AppFooter.vue";
 import ProductPurchaseModal from "@/components/product/ProductPurchaseModal.vue";
 import authService from "@/services/auth.service";
@@ -153,6 +170,8 @@ import { getAppliedPriceRow } from "@/utils/pricing";
 
 const cartCount = ref(0);
 const router = useRouter();
+const loading = ref(true);
+const cartId = ref(0);
 const rawItems = ref([]);
 const selectedKeys = ref([]);
 const showEditModal = ref(false);
@@ -200,6 +219,9 @@ const items = computed(() =>
       prices: Array.isArray(it?.prices) ? it.prices : [],
       unit: it?.unit || "",
       stockQuantity: Number(it?.stock_quantity || 0),
+      availabilityStatus: String(it?.availability_status || "available"),
+      availabilityMessage: getAvailabilityText(it),
+      canCheckout: Boolean(it?.can_checkout ?? true),
     };
   }),
 );
@@ -213,8 +235,9 @@ const selectedSubtotal = computed(() =>
   selectedItems.value.reduce((sum, it) => sum + Number(it.subtotal || 0), 0),
 );
 const allItemKeys = computed(() => items.value.map((it) => it.key));
+const selectableItemKeys = computed(() => items.value.filter((it) => it.canCheckout).map((it) => it.key));
 const isAllSelected = computed(
-  () => allItemKeys.value.length > 0 && selectedKeys.value.length === allItemKeys.value.length,
+  () => selectableItemKeys.value.length > 0 && selectedKeys.value.length === selectableItemKeys.value.length,
 );
 
 function buildKey(item) {
@@ -230,11 +253,21 @@ function formatVnd(n) {
   }).format(Number(n || 0));
 }
 
+function getAvailabilityText(item = {}) {
+  const status = String(item?.availability_status || "available");
+  if (status === "unavailable") return "Sản phẩm không khả dụng";
+  if (status === "out_of_stock" || status === "insufficient_stock") return "Sản phẩm đã hết hàng";
+  return "";
+}
+
 async function loadCart({ silent = true } = {}) {
+  loading.value = true;
   try {
     const cart = await cartService.getCart();
+    cartId.value = Number(cart?.id || 0);
     rawItems.value = cart?.items || [];
     cartCount.value = cartService.getCountFromItems(rawItems.value);
+    window.dispatchEvent(new Event("cart-updated"));
   } catch (e) {
     rawItems.value = [];
     cartCount.value = 0;
@@ -246,14 +279,16 @@ async function loadCart({ silent = true } = {}) {
 
   const existingKeys = new Set((rawItems.value || []).map((it) => buildKey(it)));
   selectedKeys.value = selectedKeys.value.filter((key) => existingKeys.has(key));
+  selectedKeys.value = selectedKeys.value.filter((key) => selectableItemKeys.value.includes(key));
 
-  if (selectedKeys.value.length === 0 && existingKeys.size > 0) {
-    selectedKeys.value = Array.from(existingKeys);
+  if (selectedKeys.value.length === 0 && selectableItemKeys.value.length > 0) {
+    selectedKeys.value = [...selectableItemKeys.value];
   }
+  loading.value = false;
 }
 
 function selectAll() {
-  selectedKeys.value = [...allItemKeys.value];
+  selectedKeys.value = [...selectableItemKeys.value];
 }
 
 function clearSelection() {
@@ -275,6 +310,9 @@ function mapDetailToEditProduct(raw, currentItem) {
     color_stocks: Array.isArray(product?.color_stocks) ? product.color_stocks : [],
     prices: Array.isArray(product?.prices) ? product.prices : currentItem?.prices || [],
     stock_quantity: Number(product?.stock_quantity || currentItem?.stockQuantity || 0),
+    availability_status: String(product?.availability_status || currentItem?.availabilityStatus || "available"),
+    availability_message: String(product?.availability_message || currentItem?.availabilityMessage || ""),
+    is_available: Boolean(product?.is_available ?? currentItem?.canCheckout ?? true),
     unit: product?.unit || currentItem?.unit || "",
   };
 }
@@ -323,6 +361,7 @@ async function handleConfirmEditItem(payload) {
     }
 
     await loadCart();
+    window.dispatchEvent(new Event("cart-updated"));
     await Swal.fire("Thành công!", "Đã cập nhật sản phẩm trong giỏ hàng.", "success");
   } catch (e) {
     const msg = e?.response?.data?.message || e?.response?.data?.error || "Cập nhật giỏ hàng thất bại.";
@@ -340,6 +379,31 @@ async function removeItem(item) {
     await Swal.fire("Thành công!", res?.message || "Xóa sản phẩm khỏi giỏ hàng thành công!", "success");
   } catch (e) {
     const msg = e?.response?.data?.message || e?.response?.data?.error || "Xóa sản phẩm thất bại.";
+    await Swal.fire("Lỗi", msg, "error");
+  }
+}
+
+async function clearCart() {
+  if (!cartId.value) return;
+  const ask = await Swal.fire({
+    title: "Xóa tất cả sản phẩm?",
+    text: "Giỏ hàng sẽ trống hoàn toàn.",
+    icon: "warning",
+    showCancelButton: true,
+    confirmButtonText: "Xóa hết",
+    cancelButtonText: "Hủy",
+  });
+  if (!ask.isConfirmed) return;
+
+  try {
+    await cartService.clear(cartId.value);
+    rawItems.value = [];
+    selectedKeys.value = [];
+    cartCount.value = 0;
+    window.dispatchEvent(new Event("cart-updated"));
+    await Swal.fire("Đã xóa", "Giỏ hàng đã được xóa hết.", "success");
+  } catch (e) {
+    const msg = e?.response?.data?.message || e?.response?.data?.error || "Xóa giỏ hàng thất bại.";
     await Swal.fire("Lỗi", msg, "error");
   }
 }
@@ -369,6 +433,7 @@ async function fetchMe() {
 
 function goCheckout() {
   const ids = selectedItems.value
+    .filter((item) => item.canCheckout)
     .map((item) => Number(item?.cartDetailId || 0))
     .filter((id) => id > 0);
 

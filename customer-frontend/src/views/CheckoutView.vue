@@ -1,6 +1,5 @@
 <template>
   <div>
-    <AppHeader :cart-count="cartCount" :user="user" />
 
     <main class="container py-4">
       <section class="checkout-shell">
@@ -14,7 +13,12 @@
           </RouterLink>
         </div>
 
-        <div v-if="!checkoutItems.length" class="empty-box text-center">
+        <div v-if="loading" class="empty-box text-center">
+          <i class="fa-solid fa-spinner fa-spin empty-icon"></i>
+          <p class="mb-0 text-muted">Đang tải dữ liệu thanh toán...</p>
+        </div>
+
+        <div v-else-if="!checkoutItems.length" class="empty-box text-center">
           <i class="fa-solid fa-box-open empty-icon"></i>
           <h5 class="mb-2">Chưa có sản phẩm để đặt</h5>
           <p class="text-muted mb-3">Hãy chọn sản phẩm trong giỏ hàng trước khi đặt.</p>
@@ -23,6 +27,10 @@
 
         <div v-else class="row g-3">
           <div class="col-12 col-xl-8">
+            <article v-if="checkoutNotice" class="panel mb-3 border-danger">
+              <div class="text-danger fw-semibold">{{ checkoutNotice }}</div>
+            </article>
+
             <article class="panel mb-3">
               <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
                 <h5 class="mb-0">Địa chỉ giao hàng</h5>
@@ -164,7 +172,7 @@
                 <strong class="price-total">{{ formatVnd(totalAmount) }}</strong>
               </div>
 
-              <button class="btn btn-main w-100 mt-3" type="button" :disabled="placingOrder" @click="placeOrder">
+              <button class="btn btn-main w-100 mt-3" type="button" :disabled="placingOrder || !canPlaceOrder" @click="placeOrder">
                 {{ placingOrder ? "Đang đặt hàng..." : "Đặt hàng" }}
               </button>
             </aside>
@@ -181,7 +189,6 @@
 import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import Swal from "sweetalert2";
-import AppHeader from "@/components/layout/AppHeader.vue";
 import AppFooter from "@/components/layout/AppFooter.vue";
 import authService from "@/services/auth.service";
 import cartService from "@/services/cart.service";
@@ -193,6 +200,7 @@ const router = useRouter();
 
 const shippingFee = 30000;
 const cartCount = ref(0);
+const loading = ref(true);
 const rawItems = ref([]);
 const buyNowDraft = ref(null);
 const selectedDetailIds = ref([]);
@@ -204,6 +212,7 @@ const payments = ref([]);
 const selectedPaymentId = ref(0);
 const openAddressList = ref(false);
 const placingOrder = ref(false);
+const checkoutErrorMessage = ref("");
 const user = ref({
   name: "Guest",
   avatar: "/default-user-avatar.svg",
@@ -262,6 +271,9 @@ const items = computed(() => {
       unitPrice,
       subtotal: unitPrice * qty,
       minQuantity,
+      availabilityStatus: String(it?.availability_status || "available"),
+      availabilityMessage: getAvailabilityText(it),
+      canCheckout: Boolean(it?.can_checkout ?? true),
     };
   });
 });
@@ -299,6 +311,18 @@ const categorySubtotalMap = computed(() => {
 const selectedPayment = computed(
   () => payments.value.find((p) => Number(p?.id) === Number(selectedPaymentId.value)) || null,
 );
+const invalidCheckoutItems = computed(() => checkoutItems.value.filter((item) => !item.canCheckout));
+const checkoutNotice = computed(() => {
+  if (checkoutErrorMessage.value) return checkoutErrorMessage.value;
+  if (invalidCheckoutItems.value.some((item) => item.availabilityStatus === "unavailable")) {
+    return "Có sản phẩm trong giỏ hiện không khả dụng.";
+  }
+  if (invalidCheckoutItems.value.length > 0) {
+    return "Có sản phẩm đã hết hàng. Vui lòng quay lại giỏ hàng để cập nhật.";
+  }
+  return "";
+});
+const canPlaceOrder = computed(() => !checkoutNotice.value);
 
 const selectedPaymentName = computed(() => selectedPayment.value?.name || "Chưa chọn");
 
@@ -337,6 +361,13 @@ function formatVnd(n) {
     style: "currency",
     currency: "VND",
   }).format(Number(n || 0));
+}
+
+function getAvailabilityText(item = {}) {
+  const status = String(item?.availability_status || "available");
+  if (status === "unavailable") return "Sản phẩm không khả dụng";
+  if (status === "out_of_stock" || status === "insufficient_stock") return "Sản phẩm đã hết hàng";
+  return "";
 }
 
 function discountLabel(d) {
@@ -397,11 +428,13 @@ async function fetchCheckoutOptions() {
     payments.value = [];
     selectedDiscountIds.value = [];
     selectedPaymentId.value = 0;
+    checkoutErrorMessage.value = "";
     return;
   }
 
   try {
     const options = await checkoutService.getCheckoutOptions(buildCheckoutScopePayload());
+    checkoutErrorMessage.value = "";
     discounts.value = Array.isArray(options?.discounts) ? options.discounts : [];
     payments.value = Array.isArray(options?.payments) ? options.payments : [];
 
@@ -412,11 +445,13 @@ async function fetchCheckoutOptions() {
     if (!paymentIds.has(Number(selectedPaymentId.value))) {
       selectedPaymentId.value = Number(payments.value?.[0]?.id || 0);
     }
-  } catch {
+  } catch (e) {
     discounts.value = [];
     payments.value = [];
     selectedDiscountIds.value = [];
     selectedPaymentId.value = 0;
+    checkoutErrorMessage.value =
+      e?.response?.data?.message || e?.response?.data?.error || "Có sản phẩm đã hết hàng.";
   }
 }
 
@@ -444,52 +479,65 @@ async function fetchMe() {
 }
 
 async function loadData() {
-  const selectedIds = parseSelectedIds();
-  selectedDetailIds.value = selectedIds;
-
-  if (isBuyNowMode.value) {
-    buyNowDraft.value = checkoutService.getBuyNowItem();
-    rawItems.value = [];
-    try {
-      cartCount.value = await cartService.getCount();
-    } catch {
-      cartCount.value = 0;
-    }
-  } else {
-    checkoutService.clearBuyNowItem();
-    buyNowDraft.value = null;
-
-    try {
-      const cart = await cartService.getCart();
-      rawItems.value = cart?.items || [];
-      cartCount.value = cartService.getCountFromItems(rawItems.value);
-    } catch {
-      rawItems.value = [];
-      cartCount.value = 0;
-    }
-
-    if (!selectedDetailIds.value.length && rawItems.value.length) {
-      selectedDetailIds.value = rawItems.value
-        .map((it) => Number(it?.id || 0))
-        .filter((id) => id > 0);
-    }
-  }
-
+  loading.value = true;
   try {
-    addresses.value = await checkoutService.getDeliveryInfos();
-    const defaultAddress = addresses.value.find((a) => Boolean(a?.default));
-    selectedAddressId.value = Number(defaultAddress?.id || addresses.value?.[0]?.id || 0);
-  } catch {
-    addresses.value = [];
-    selectedAddressId.value = 0;
-  }
+    checkoutErrorMessage.value = "";
+    const selectedIds = parseSelectedIds();
+    selectedDetailIds.value = selectedIds;
 
-  await fetchCheckoutOptions();
+    if (isBuyNowMode.value) {
+      buyNowDraft.value = checkoutService.getBuyNowItem();
+      rawItems.value = [];
+      try {
+        cartCount.value = await cartService.getCount();
+        window.dispatchEvent(new Event("cart-updated"));
+      } catch {
+        cartCount.value = 0;
+      }
+    } else {
+      checkoutService.clearBuyNowItem();
+      buyNowDraft.value = null;
+
+      try {
+        const cart = await cartService.getCart();
+        rawItems.value = cart?.items || [];
+        cartCount.value = cartService.getCountFromItems(rawItems.value);
+        window.dispatchEvent(new Event("cart-updated"));
+      } catch {
+        rawItems.value = [];
+        cartCount.value = 0;
+      }
+
+      if (!selectedDetailIds.value.length && rawItems.value.length) {
+        selectedDetailIds.value = rawItems.value
+          .map((it) => Number(it?.id || 0))
+          .filter((id) => id > 0);
+      }
+    }
+
+    try {
+      addresses.value = await checkoutService.getDeliveryInfos();
+      const defaultAddress = addresses.value.find((a) => Boolean(a?.default));
+      selectedAddressId.value = Number(defaultAddress?.id || addresses.value?.[0]?.id || 0);
+    } catch {
+      addresses.value = [];
+      selectedAddressId.value = 0;
+    }
+
+    await fetchCheckoutOptions();
+  } finally {
+    loading.value = false;
+  }
 }
 
 async function placeOrder() {
   if (!checkoutItems.value.length) {
     await Swal.fire("Lỗi", "Không có sản phẩm để đặt.", "error");
+    return;
+  }
+
+  if (checkoutNotice.value) {
+    await Swal.fire("Lỗi", checkoutNotice.value, "error");
     return;
   }
 
