@@ -34,6 +34,10 @@ class ProductService {
   async saveProductPrices(id, payload) {
     return (await this.api.post(`/${id}/save-product-prices`, payload)).data;
   }
+
+  async getPurchaseStats(id, params = {}) {
+    return (await this.api.get(`/${id}/purchase-stats`, { params })).data;
+  }
 }
 
 export default new ProductService();

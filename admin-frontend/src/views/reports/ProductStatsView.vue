@@ -20,7 +20,7 @@
       <div class="card card-soft">
         <div class="card-body">
           <div class="row g-2 align-items-center">
-            <div class="col-12 col-md-6 col-lg-5">
+            <div class="col-12 col-lg-4">
               <div class="input-group">
                 <span class="input-group-text bg-transparent">
                   <i class="fa-solid fa-magnifying-glass"></i>
@@ -37,7 +37,53 @@
               </div>
             </div>
 
-            <div class="col-12 col-md-6 col-lg-7 d-flex justify-content-md-end gap-2">
+            <div class="col-12 col-lg-8">
+              <div class="row g-2">
+                <div class="col-12 col-md-6 col-xl-4">
+                  <select v-model="filters.category_id" class="form-select bg-transparent">
+                    <option :value="null">Tất cả danh mục</option>
+                    <option v-for="c in categories" :key="c.id" :value="c.id">{{ c.name }}</option>
+                  </select>
+                </div>
+                <div class="col-6 col-md-3 col-xl-2">
+                  <input v-model="filters.sold_from" type="date" class="form-control bg-transparent" />
+                </div>
+                <div class="col-6 col-md-3 col-xl-2">
+                  <input v-model="filters.sold_to" type="date" class="form-control bg-transparent" />
+                </div>
+                <div class="col-6 col-md-3 col-xl-2">
+                  <input
+                    v-model.number="filters.stock_lte"
+                    type="number"
+                    min="0"
+                    class="form-control bg-transparent"
+                    placeholder="Tồn ≤"
+                  />
+                </div>
+                <div class="col-6 col-md-3 col-xl-2">
+                  <select v-model="filters.sort_by" class="form-select bg-transparent">
+                    <option value="sold_qty">Bán nhiều</option>
+                    <option value="stock_qty">Tồn kho</option>
+                    <option value="avg_selling_price">Giá bán TB</option>
+                    <option value="avg_purchase_price">Giá nhập TB</option>
+                    <option value="purchased_qty">Đã nhập</option>
+                  </select>
+                </div>
+                <div class="col-6 col-md-3 col-xl-2">
+                  <select v-model="filters.sort_dir" class="form-select bg-transparent">
+                    <option value="desc">Giảm dần</option>
+                    <option value="asc">Tăng dần</option>
+                  </select>
+                </div>
+                <div class="col-12 col-md-3 col-xl-2 d-flex align-items-center">
+                  <span class="badge bg-secondary-subtle text-secondary ms-md-auto">Tổng: {{ meta.total }}</span>
+                </div>
+              </div>
+            </div>
+            <div class="col-12 d-block d-lg-none">
+              <span class="badge bg-secondary-subtle text-secondary">Tổng: {{ meta.total }}</span>
+            </div>
+            <div class="col-12 col-md-6 col-lg-7 d-none">
               <span class="badge bg-secondary-subtle text-secondary align-self-center">
                 Tổng: {{ meta.total }}
               </span>
@@ -127,6 +173,7 @@
 import { onMounted, ref, watch } from "vue";
 import Swal from "sweetalert2";
 import { useRouter } from "vue-router";
+import CategoryService from "../../services/category.service";
 import ProductStatsService from "../../services/product-stats.service";
 
 const keyword = ref("");
@@ -136,6 +183,15 @@ const meta = ref({ current_page: 1, per_page: perPage, total: 0, last_page: 1 })
 const items = ref([]);
 const loading = ref(false);
 const router = useRouter();
+const categories = ref([]);
+const filters = ref({
+  category_id: null,
+  sold_from: null,
+  sold_to: null,
+  stock_lte: null,
+  sort_by: "sold_qty",
+  sort_dir: "desc",
+});
 
 function money(v) {
   return Number(v || 0).toLocaleString("vi-VN") + " ₫";
@@ -148,6 +204,7 @@ async function fetchData() {
       q: keyword.value.trim() || undefined,
       page: page.value,
       per_page: perPage,
+      ...filters.value,
     });
     const list = res?.data?.items ?? res?.items ?? [];
     items.value = Array.isArray(list) ? list : [];
@@ -171,6 +228,7 @@ async function onExport() {
   try {
     const res = await ProductStatsService.export({
       q: keyword.value.trim() || undefined,
+      ...filters.value,
     });
     const blob = new Blob([res.data], {
       type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -190,7 +248,18 @@ async function onExport() {
   }
 }
 
-onMounted(fetchData);
+async function fetchCategories() {
+  try {
+    const res = await CategoryService.getAll({ per_page: 100 });
+    categories.value = res?.data?.items ?? res?.items ?? [];
+  } catch (e) {
+    categories.value = [];
+  }
+}
+
+onMounted(async () => {
+  await Promise.all([fetchCategories(), fetchData()]);
+});
 
 watch(keyword, async () => {
   page.value = 1;
@@ -204,6 +273,15 @@ watch(page, async () => {
 function goDetail(id) {
   router.push({ name: "products.detail", params: { id } });
 }
+
+watch(
+  () => ({ ...filters.value }),
+  async () => {
+    page.value = 1;
+    await fetchData();
+  },
+  { deep: true }
+);
 </script>
 
 <style scoped>
