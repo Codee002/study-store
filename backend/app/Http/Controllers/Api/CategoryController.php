@@ -182,7 +182,7 @@ class CategoryController extends Controller
      * Remove the specified resource from storage.
      * DELETE /api/categories/{id}
      */
-    public function destroy(string $id)
+        public function destroy(string $id)
     {
         try {
             $deleted = false;
@@ -196,10 +196,10 @@ class CategoryController extends Controller
                 }
 
                 if ($category->products()->exists()) {
-                    throw new \RuntimeException('Danh mục đang có sản phẩm, không thể xoá');
+                    throw new \RuntimeException('Danh mục đang có sản phẩm, không thể xóa');
                 }
 
-                $deleted = (bool) $category->delete();
+                $deleted = (bool) $category->forceDelete();
             });
 
             if (! $deleted) {
@@ -213,12 +213,17 @@ class CategoryController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Xoá danh mục thành công',
+                'message' => 'Xóa danh mục thành công',
             ], 200);
+        } catch (\RuntimeException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 400);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Xoá danh mục thất bại. Vui lòng thử lại sau!',
+                'message' => 'Xóa danh mục thất bại. Vui lòng thử lại sau!',
                 'error'   => $e->getMessage(),
             ], 500);
         }

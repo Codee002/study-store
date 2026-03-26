@@ -10,39 +10,93 @@ use App\Models\Product;
 use App\Models\ProductImage;
 use App\Models\Tier;
 use App\Models\WarehouseDetail;
+use App\Models\ReceiptDetail;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Str;
+use App\Services\AiSearchClient;
 
 class ProductController extends Controller
 {
     /**
      * Display a listing of the resource.
      */
-    public function index(Request $request)
+    public function index(Request $request, AiSearchClient $ai)
     {
         try {
             $q       = trim((string) $request->query('q', ''));
             $perPage = (int) $request->query('per_page', 10);
             $perPage = $perPage > 0 ? min($perPage, 50) : 10;
             $page    = (int) $request->query('page', 1);
+            $categoryId = $request->query('category_id', null);
+
+            // Nếu query bắt đầu bằng @ => gọi semantic search AI service
+            if ($q !== '' && Str::startsWith($q, '@')) {
+                $semantic = $ai->semanticSearch($q, $perPage);
+                $idScores = collect($semantic)->pluck('score', 'id');
+                $ids = $idScores->keys()->all();
+
+                $products = Product::query()
+                    ->with(['images', 'category', 'colors', 'prices.tier'])
+                    ->whereIn('id', $ids)
+                    ->orderByRaw('FIELD(id, ' . implode(',', array_map('intval', $ids)) . ')')
+                    ->paginate($perPage, ['*'], 'page', 1);
+
+                $collection = collect($products->items());
+
+                $this->appendColorStocksToProducts($collection, null);
+                $this->appendReviewSummaryToProducts($collection);
+                $this->appendSoldOrdersCountToProducts($collection);
+
+                $items = $collection->map(function ($p) use ($idScores) {
+                    $arr = $p->toArray();
+                    if (method_exists($this, 'buildStockSummary')) {
+                        $stock = $this->buildStockSummary((int) $p->id);
+                        $arr['stock_summary'] = $stock;
+                        $arr['stock_quantity'] = $stock['total_quantity'] ?? 0;
+                    }
+                    $arr['score'] = $idScores[$p->id] ?? null;
+                    return $arr;
+                })->values();
+
+                $payload = [
+                    'items' => $items,
+                    'meta'  => [
+                        'current_page' => $products->currentPage(),
+                        'per_page'     => $products->perPage(),
+                        'total'        => $products->total(),
+                        'last_page'    => $products->lastPage(),
+                    ],
+                ];
+
+                return response()->json([
+                    'success' => true,
+                    'source'  => 'semantic',
+                    'data'    => $payload,
+                ], 200);
+            }
 
             $cacheKey = 'products:index:' . md5(json_encode([
-                'q'        => $q,
-                'per_page' => $perPage,
-                'page'     => $page,
+                'q'           => $q,
+                'per_page'    => $perPage,
+                'page'        => $page,
+                'category_id' => $categoryId,
             ]));
 
             $payload = Cache::tags(['products'])->remember($cacheKey, 300
-                , function () use ($q, $perPage, $page) {
+                , function () use ($q, $perPage, $page, $categoryId) {
                     $query = Product::query();
 
                     $query->with(['images', 'category', 'colors']);
 
                     if ($q !== '') {
                         $query->where('name', 'like', '%' . $q . '%');
+                    }
+                    if ($categoryId) {
+                        $query->where('products.category_id', $categoryId);
                     }
 
                     $paginator = $query
@@ -72,6 +126,68 @@ class ProductController extends Controller
                 'error'   => $e->getMessage(),
             ], 500);
         }
+    }
+
+    /**
+     * Recommendations for customer homepage.
+     */
+    public function recommendations(Request $request, AiSearchClient $ai)
+    {
+        $user = $request->user();
+        $userId = $user?->id ? (string) $user->id : 'guest';
+        $recentIds = collect(explode(',', (string) $request->query('recent_ids', '')))
+            ->filter()
+            ->values()
+            ->all();
+        $refresh = $request->boolean('refresh', false);
+        $cacheKey = "recommend:{$userId}";
+        $perPage = 24;
+
+        if ($refresh) {
+            Cache::tags(['products', 'recommend'])->forget($cacheKey);
+        }
+
+        $items = Cache::tags(['products', 'recommend'])
+            ->remember($cacheKey, 600, function () use ($ai, $userId, $perPage, $recentIds) {
+                try {
+                    $results = $ai->recommendContent($userId, $perPage, $recentIds);
+                } catch (\Throwable $e) {
+                    return [];
+                }
+
+                $idScores = collect($results)->pluck('score', 'id');
+                $ids = $idScores->keys()->all();
+                if (empty($ids)) {
+                    return [];
+                }
+
+                $products = Product::query()
+                    ->with(['images', 'category', 'colors', 'prices.tier'])
+                    ->whereIn('id', $ids)
+                    ->orderByRaw('FIELD(id, ' . implode(',', array_map('intval', $ids)) . ')')
+                    ->get();
+
+                $collection = collect($products);
+                $this->appendColorStocksToProducts($collection, null);
+                $this->appendReviewSummaryToProducts($collection);
+                $this->appendSoldOrdersCountToProducts($collection);
+
+                return $collection->map(function ($p) use ($idScores) {
+                    $arr = $p->toArray();
+                    $arr['score'] = $idScores[$p->id] ?? null;
+                    return $arr;
+                })->values()->all();
+            });
+
+        return response()->json([
+            'success' => true,
+            'data'    => [
+                'items' => $items,
+                'meta'  => [
+                    'total' => count($items),
+                ],
+            ],
+        ]);
     }
 
     /**
@@ -164,6 +280,66 @@ class ProductController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Lấy chi tiết sản phẩm thất bại. Vui lòng thử lại sau!',
+                'error'   => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Thống kê nhập hàng cho admin: giá nhập trung bình + lần gần nhất.
+     */
+    public function purchaseStats(Request $request, string $productId)
+    {
+        try {
+            $user = $request->user();
+            if (! $user || (string) ($user->role ?? '') !== 'admin') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Khong co quyen truy cap',
+                ], 403);
+            }
+
+            $colorId = $request->query('color_id', null);
+
+            $baseQuery = ReceiptDetail::query()
+                ->join('receipts', 'receipts.id', '=', 'receipt_details.receipt_id')
+                ->where('receipts.status', 'completed')
+                ->where('receipt_details.product_id', $productId);
+
+            if ($colorId !== null && $colorId !== '') {
+                $baseQuery->where('receipt_details.color_id', $colorId);
+            }
+
+            $aggregate = (clone $baseQuery)
+                ->selectRaw('COALESCE(SUM(receipt_details.quantity), 0) as total_qty')
+                ->selectRaw('COALESCE(SUM(receipt_details.quantity * receipt_details.purchase_price), 0) as total_amount')
+                ->selectRaw('COUNT(*) as total_entries')
+                ->first();
+
+            $totalQty     = (int) ($aggregate->total_qty ?? 0);
+            $totalAmount  = (float) ($aggregate->total_amount ?? 0);
+            $avgPrice     = $totalQty > 0 ? round($totalAmount / $totalQty, 2) : 0.0;
+            $totalEntries = (int) ($aggregate->total_entries ?? 0);
+
+            $last = (clone $baseQuery)
+                ->orderByDesc('receipts.created_at')
+                ->orderByDesc('receipt_details.id')
+                ->first();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Lay thong ke gia nhap thanh cong',
+                'data'    => [
+                    'avg_purchase_price' => $avgPrice,
+                    'last_purchase_price' => $last?->purchase_price ? (float) $last->purchase_price : null,
+                    'total_quantity'     => $totalQty,
+                    'total_entries'      => $totalEntries,
+                ],
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Lay thong ke gia nhap that bai',
                 'error'   => $e->getMessage(),
             ], 500);
         }
@@ -321,7 +497,56 @@ class ProductController extends Controller
      */
     public function destroy(string $id)
     {
-        //
+        try {
+            $deleted = false;
+
+            DB::transaction(function () use ($id, &$deleted) {
+                $product = Product::query()
+                    ->with(['images'])
+                    ->find($id);
+
+                if (! $product) {
+                    $deleted = false;
+                    return;
+                }
+                $existsInReceipts = ReceiptDetail::query()
+                    ->join('receipts', 'receipts.id', '=', 'receipt_details.receipt_id')
+                    ->where('receipt_details.product_id', $product->id)
+                    ->where('receipts.status', 'completed')
+                    ->exists();
+
+                if ($existsInReceipts) {
+                    throw new \RuntimeException('Sản phẩm đã nhập vào kho');
+                }
+
+                $deleted = (bool) $product->delete();
+            });
+
+            if (! $deleted) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Khôg tìm thấy sản phẩm',
+                ], 404);
+            }
+
+            Cache::tags(['products'])->flush();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Xóa sản phẩm thành công',
+            ], 200);
+        } catch (\RuntimeException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 400);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Xóa sản phẩm thất bại. Vui lòng thử lại sau!',
+                'error'   => $e->getMessage(),
+            ], 500);
+        }
     }
 
     public function getPrices(Request $request, string $productId)
@@ -487,7 +712,7 @@ class ProductController extends Controller
         }
     }
 
-    public function getCustomerProductDetail(Request $request, string $id)
+    public function getCustomerProductDetail(Request $request, string $id, AiSearchClient $ai)
     {
         try {
             $status = $request->query('status', 'actived');
@@ -608,6 +833,8 @@ class ProductController extends Controller
 
                 $this->appendColorStocksToProducts(collect([$product]), $status);
                 $this->appendColorStocksToProducts($relatedProducts, $status);
+                $this->appendAvailabilityToProducts(collect([$product]));
+                $this->appendAvailabilityToProducts($relatedProducts);
 
                 $reviewPayload = $this->getProductReviewsPayload((int) $product->id, 4);
                 $product->setAttribute('rating', $reviewPayload['summary']['avg_rating']);
@@ -626,6 +853,15 @@ class ProductController extends Controller
                     'success' => false,
                     'message' => 'Không tìm thấy sản phẩm',
                 ], 404);
+            }
+
+            // Ghi nhận hành vi xem sản phẩm cho engine gợi ý
+            if ($user && $user->id) {
+                try {
+                    $ai->logEvent((string) $user->id, (int) $id, 'view');
+                } catch (\Throwable $e) {
+                    // không chặn luồng nếu AI service lỗi
+                }
             }
 
             return response()->json([
@@ -746,6 +982,7 @@ class ProductController extends Controller
                 'warehouse_details.product_id',
                 'warehouse_details.color_id',
                 'colors.color_name',
+                DB::raw('COUNT(*) as active_row_count'),
                 DB::raw('SUM(warehouse_details.quantity) as stock_quantity')
             )
             ->whereIn('warehouse_details.product_id', $productIds)
@@ -781,11 +1018,16 @@ class ProductController extends Controller
             $colorStocks = $colors->map(function ($color) use ($rowMapByColorId, $reservedForProduct) {
                 $row = $rowMapByColorId->get((string) $color->id);
                 $reservedQty = (int) ($reservedForProduct->get((string) $color->id)->reserved_quantity ?? 0);
+                $availableQty = max(0, (int) ($row->stock_quantity ?? 0) - $reservedQty);
+                $availability = $this->buildAvailabilityPayload((int) ($row->active_row_count ?? 0), $availableQty);
 
                 return [
                     'color_id'      => $color->id,
                     'color_name'    => $color->color_name,
-                    'stock_quantity' => max(0, (int) ($row->stock_quantity ?? 0) - $reservedQty),
+                    'stock_quantity' => $availableQty,
+                    'availability_status' => $availability['status'],
+                    'availability_message' => $availability['message'],
+                    'is_available' => $availability['is_available'],
                 ];
             });
 
@@ -795,15 +1037,78 @@ class ProductController extends Controller
                 ->filter(fn($row) => ! $colorIdsInPivot->contains((int) $row->color_id))
                 ->map(function ($row) use ($reservedForProduct) {
                     $reservedQty = (int) ($reservedForProduct->get((string) $row->color_id)->reserved_quantity ?? 0);
+                    $availableQty = max(0, (int) $row->stock_quantity - $reservedQty);
+                    $availability = $this->buildAvailabilityPayload((int) ($row->active_row_count ?? 0), $availableQty);
                     return [
                         'color_id'      => (int) $row->color_id,
                         'color_name'    => $row->color_name,
-                        'stock_quantity' => max(0, (int) $row->stock_quantity - $reservedQty),
+                        'stock_quantity' => $availableQty,
+                        'availability_status' => $availability['status'],
+                        'availability_message' => $availability['message'],
+                        'is_available' => $availability['is_available'],
                     ];
                 });
 
             $product->setAttribute('color_stocks', $colorStocks->concat($extraColorStocks)->values()->all());
         }
+    }
+
+    private function appendAvailabilityToProducts(Collection $products): void
+    {
+        if ($products->isEmpty()) {
+            return;
+        }
+
+        foreach ($products as $product) {
+            $colorStocks = collect($product->color_stocks ?? []);
+            $hasActiveVariant = $colorStocks->contains(function ($color) {
+                return (string) ($color['availability_status'] ?? '') !== 'unavailable';
+            });
+            $hasSellableVariant = $colorStocks->contains(function ($color) {
+                return (bool) ($color['is_available'] ?? false);
+            });
+            $totalAvailableQuantity = (int) $colorStocks->sum(fn($color) => (int) ($color['stock_quantity'] ?? 0));
+
+            if ($colorStocks->isEmpty()) {
+                $availability = $this->buildAvailabilityPayload(0, 0);
+            } elseif ($hasSellableVariant) {
+                $availability = $this->buildAvailabilityPayload(1, $totalAvailableQuantity);
+            } elseif ($hasActiveVariant) {
+                $availability = $this->buildAvailabilityPayload(1, 0);
+            } else {
+                $availability = $this->buildAvailabilityPayload(0, 0);
+            }
+
+            $product->setAttribute('availability_status', $availability['status']);
+            $product->setAttribute('availability_message', $availability['message']);
+            $product->setAttribute('is_available', $availability['is_available']);
+            $product->setAttribute('stock_quantity', $totalAvailableQuantity);
+        }
+    }
+
+    private function buildAvailabilityPayload(int $activeRowCount, int $availableQuantity): array
+    {
+        if ($activeRowCount <= 0) {
+            return [
+                'status' => 'unavailable',
+                'message' => 'San pham khong kha dung',
+                'is_available' => false,
+            ];
+        }
+
+        if ($availableQuantity <= 0) {
+            return [
+                'status' => 'out_of_stock',
+                'message' => 'San pham da het hang',
+                'is_available' => false,
+            ];
+        }
+
+        return [
+            'status' => 'available',
+            'message' => '',
+            'is_available' => true,
+        ];
     }
 
     private function appendReviewSummaryToProducts(Collection $products): void

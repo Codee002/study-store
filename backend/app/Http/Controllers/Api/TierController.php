@@ -5,6 +5,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Tier\StoreTierRequest;
 use App\Http\Requests\Tier\UpdateTierRequest;
 use App\Models\Tier;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -198,7 +199,7 @@ class TierController extends Controller
     /**
      * DELETE /api/tiers/{id}
      */
-    public function destroy(string $id)
+        public function destroy(string $id)
     {
         try {
             $deleted = false;
@@ -209,6 +210,14 @@ class TierController extends Controller
                 if (! $tier) {
                     $deleted = false;
                     return;
+                }
+
+                // Chặn xóa nếu đã có user gán tier này
+                $hasUser = User::query()
+                    ->where('tier_id', $tier->id)
+                    ->exists();
+                if ($hasUser) {
+                    throw new \RuntimeException('Tier đã được gán cho người dùng, không thể xoá');
                 }
 
                 $deleted = (bool) $tier->delete();
@@ -227,6 +236,11 @@ class TierController extends Controller
                 'success' => true,
                 'message' => 'Xoá tier thành công',
             ], 200);
+        } catch (\RuntimeException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 400);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,

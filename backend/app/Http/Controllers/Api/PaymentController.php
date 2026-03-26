@@ -5,6 +5,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Payment\StorePaymentRequest;
 use App\Http\Requests\Payment\UpdatePaymentRequest;
 use App\Models\Payment;
+use App\Models\Order;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -173,6 +174,14 @@ class PaymentController extends Controller
                     return;
                 }
 
+                // Chặn xoá nếu đã có đơn hàng sử dụng phương thức này
+                $hasOrder = Order::query()
+                    ->where('payment_id', $payment->id)
+                    ->exists();
+                if ($hasOrder) {
+                    throw new \RuntimeException('Phương thức thanh toán đã được dùng trong đơn hàng, không thể xoá');
+                }
+
                 $deleted = (bool) $payment->delete();
             });
 
@@ -189,6 +198,11 @@ class PaymentController extends Controller
                 'success' => true,
                 'message' => 'Xoa phuong thuc thanh toan thanh cong',
             ], 200);
+        } catch (\RuntimeException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 400);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,

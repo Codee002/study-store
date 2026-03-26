@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Supplier\StoreSupplierRequest;
 use App\Http\Requests\Supplier\UpdateSupplierRequest;
+use App\Models\Receipt;
 use App\Models\Supplier;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -179,7 +180,7 @@ class SupplierController extends Controller
     /**
      * DELETE /api/suppliers/{id}
      */
-    public function destroy(string $id)
+        public function destroy(string $id)
     {
         try {
             $deleted = false;
@@ -190,6 +191,14 @@ class SupplierController extends Controller
                 if (! $supplier) {
                     $deleted = false;
                     return;
+                }
+
+                // Chặn xóa nếu đã có phiếu nhập thuộc nhà cung cấp này
+                $hasReceipt = Receipt::query()
+                    ->where('supplier_id', $supplier->id)
+                    ->exists();
+                if ($hasReceipt) {
+                    throw new \RuntimeException('Nhà cung cấp đã có phiếu nhập, không thể xoá');
                 }
 
                 $deleted = (bool) $supplier->delete();
@@ -208,6 +217,11 @@ class SupplierController extends Controller
                 'success' => true,
                 'message' => 'Xoá nhà cung cấp thành công',
             ], 200);
+        } catch (\RuntimeException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 400);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,

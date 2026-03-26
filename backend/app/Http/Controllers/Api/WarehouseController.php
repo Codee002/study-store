@@ -228,11 +228,24 @@ class WarehouseController extends Controller
                     return;
                 }
 
-                // Nếu kho có ràng buộc tồn kho/phát sinh phiếu nhập/xuất thì chặn ở đây
-                // if ($warehouse->stocks()->exists()) {
-                //     throw new \RuntimeException('Kho đang có dữ liệu tồn, không thể xoá');
-                // }
+                // Chặn xóa nếu kho đã phát sinh phiếu nhập
+                $hasCompletedReceipts = DB::table('receipts')
+                    ->where('warehouse_id', $warehouse->id)
+                    ->exists();
+                if ($hasCompletedReceipts) {
+                    throw new \RuntimeException('Kho đã có phiếu nhập, không thể xóa');
+                }
 
+                // Chặn xóa nếu vẫn còn tồn kho
+                $hasStock = WarehouseDetail::query()
+                    ->where('warehouse_id', $warehouse->id)
+                    ->where('quantity', '>', 0)
+                    ->exists();
+                if ($hasStock) {
+                    throw new \RuntimeException('Kho còn tồn kho, không thể xóa');
+                }
+
+                // Chỉ soft delete để có thể khôi phục, giữ nguyên các quan hệ
                 $deleted = (bool) $warehouse->delete();
             });
 
@@ -255,6 +268,11 @@ class WarehouseController extends Controller
                 'message' => 'Xoá kho thất bại. Vui lòng thử lại sau!',
                 'error'   => $e->getMessage(),
             ], 500);
+        } catch (\RuntimeException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 400);
         }
     }
 
