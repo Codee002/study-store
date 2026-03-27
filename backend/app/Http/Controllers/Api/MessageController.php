@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Events\MessageReadUpdated;
 use App\Events\MessageSent;
 use App\Models\Conversation;
 use App\Models\Message;
@@ -241,6 +242,7 @@ class MessageController extends Controller
 
         // mark as read for current user (only incoming)
         $toInsert = [];
+        $updatedMessages = [];
         foreach ($conversation->messages as $message) {
             $already = $message->reads->firstWhere('user_id', $user->id);
             if ($message->user_id !== $user->id && ! $already) {
@@ -249,10 +251,18 @@ class MessageController extends Controller
                     'user_id' => $user->id,
                     'read_at' => now(),
                 ];
+                $updatedMessages[] = [
+                    'id' => $message->id,
+                    'read_by_user_ids' => array_values(array_unique([
+                        ...$message->reads->pluck('user_id')->map(fn ($id) => (int) $id)->all(),
+                        (int) $user->id,
+                    ])),
+                ];
             }
         }
         if ($toInsert) {
             MessageRead::insertOrIgnore($toInsert);
+            event(new MessageReadUpdated($conversation, (int) $user->id, $updatedMessages));
         }
 
         return response()->json([
