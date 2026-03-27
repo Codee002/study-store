@@ -18,25 +18,54 @@ class ReceiptController extends Controller
     public function index(Request $request)
     {
         try {
-            $q       = trim((string) $request->query('q', ''));
-            $perPage = (int) $request->query('per_page', 10);
-            $perPage = $perPage > 0 ? min($perPage, 50) : 10;
-            $page    = (int) $request->query('page', 1);
+            $q           = trim((string) $request->query('q', ''));
+            $perPage     = (int) $request->query('per_page', 10);
+            $perPage     = $perPage > 0 ? min($perPage, 50) : 10;
+            $page        = (int) $request->query('page', 1);
+            $supplierId  = $request->query('supplier_id');
+            $warehouseId = $request->query('warehouse_id');
+            $status      = $request->query('status');
 
             $cacheKey = 'receipts:index:' . md5(json_encode([
-                'q'        => $q,
-                'per_page' => $perPage,
-                'page'     => $page,
+                'q'           => $q,
+                'per_page'    => $perPage,
+                'page'        => $page,
+                'supplier_id' => $supplierId,
+                'warehouse_id'=> $warehouseId,
+                'status'      => $status,
             ]));
 
-            $payload = Cache::tags(['receipts'])->remember($cacheKey, 300
-                , function () use ($q, $perPage, $page) {
-                    $query = Receipt::query();
-                    $query->with('warehouse');
-                    $query->with('supplier');
+            $payload = Cache::tags(['receipts'])->remember($cacheKey, 120
+                , function () use ($q, $perPage, $page, $supplierId, $warehouseId, $status) {
+                    $aggSub = ReceiptDetail::query()
+                        ->select('receipt_id')
+                        ->selectRaw('COALESCE(SUM(quantity),0) as total_quantity')
+                        ->selectRaw('COALESCE(SUM(quantity * purchase_price),0) as total_cost')
+                        ->groupBy('receipt_id');
+
+                    $query = Receipt::query()
+                        ->select('receipts.*', 'rd.total_quantity', 'rd.total_cost')
+                        ->leftJoinSub($aggSub, 'rd', function ($join) {
+                            $join->on('rd.receipt_id', '=', 'receipts.id');
+                        })
+                        ->with('warehouse')
+                        ->with('supplier');
+
+                    if ($supplierId) {
+                        $query->where('supplier_id', $supplierId);
+                    }
+                    if ($warehouseId) {
+                        $query->where('warehouse_id', $warehouseId);
+                    }
+                    if ($status) {
+                        $query->where('status', $status);
+                    }
+                    if ($q !== '') {
+                        $query->where('receipts.id', $q);
+                    }
 
                     $paginator = $query
-                        ->orderByDesc('id')
+                        ->orderByDesc('receipts.id')
                         ->paginate($perPage, ['*'], 'page', $page);
 
                     return [
@@ -207,7 +236,8 @@ class ReceiptController extends Controller
                     $productId = $d->product_id;
                     $colorId   = $d->color_id ? $d->color_id : null;
                     $qty       = $d->quantity;
-                    $stockService->increase($warehouseId, $productId, $colorId, $qty, 'actived');
+                    // Sản phẩm mới nhập lần đầu chưa có giá bán nên để disabled mặc định
+                    $stockService->increase($warehouseId, $productId, $colorId, $qty, 'disabled');
                 }
 
                 // đổi trạng thái phiếu
