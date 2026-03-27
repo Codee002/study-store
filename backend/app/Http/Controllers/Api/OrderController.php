@@ -15,6 +15,8 @@ use App\Models\Payment;
 use App\Models\Product;
 use App\Models\User;
 use App\Models\WarehouseDetail;
+use App\Services\AiSearchClient;
+use App\Services\NotificationService;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
@@ -84,11 +86,13 @@ class OrderController extends Controller
                 ->where('status', 'actived')
                 ->orderByDesc('id')
                 ->get(['id', 'name', 'status'])
-                ->map(fn(Payment $payment) => [
-                    'id'     => (int) $payment->id,
-                    'name'   => (string) $payment->name,
-                    'status' => (string) $payment->status,
-                ])
+                ->map(function (Payment $payment) {
+                    return [
+                        'id'     => (int) $payment->id,
+                        'name'   => (string) $payment->name,
+                        'status' => (string) $payment->status,
+                    ];
+                })
                 ->values();
 
             return response()->json([
@@ -100,10 +104,12 @@ class OrderController extends Controller
                     'summary'   => [
                         'product_subtotal'   => round((float) $draft['product_subtotal'], 2),
                         'category_subtotals' => collect($draft['category_subtotals'])
-                            ->map(fn($subtotal, $categoryId) => [
-                                'category_id' => (int) $categoryId,
-                                'subtotal'    => round((float) $subtotal, 2),
-                            ])
+                            ->map(function ($subtotal, $categoryId) {
+                                return [
+                                    'category_id' => (int) $categoryId,
+                                    'subtotal'    => round((float) $subtotal, 2),
+                                ];
+                            })
                             ->values(),
                     ],
                 ],
@@ -354,7 +360,7 @@ class OrderController extends Controller
             'message' => 'Khong tim thay giao dich VNPay hoac da het han',
         ], 404);
     }
-    public function placeOrder(Request $request)
+    public function placeOrder(Request $request, AiSearchClient $ai)
     {
         try {
             $validated = $request->validate([
@@ -386,8 +392,12 @@ class OrderController extends Controller
             }
 
             $cartDetailIds = collect($validated['cart_detail_ids'] ?? [])
-                ->map(fn($id) => (int) $id)
-                ->filter(fn($id) => $id > 0)
+                ->map(function ($id) {
+                    return (int) $id;
+                })
+                ->filter(function ($id) {
+                    return $id > 0;
+                })
                 ->unique()
                 ->values()
                 ->all();
@@ -419,8 +429,12 @@ class OrderController extends Controller
             $today               = Carbon::today();
             $tierId              = $this->resolveEffectiveTierId($user);
             $selectedDiscountIds = collect($validated['discount_ids'] ?? [])
-                ->map(fn($id) => (int) $id)
-                ->filter(fn($id) => $id > 0)
+                ->map(function ($id) {
+                    return (int) $id;
+                })
+                ->filter(function ($id) {
+                    return $id > 0;
+                })
                 ->unique()
                 ->values()
                 ->all();
@@ -535,6 +549,27 @@ class OrderController extends Controller
                 ];
             });
 
+            // Ghi nhận hành vi mua hàng cho engine gợi ý
+            try {
+                $productIds = OrderDetail::query()
+                    ->where('order_id', (int) ($payload['order_id'] ?? 0))
+                    ->pluck('product_id')
+                    ->map(function ($productId) {
+                        return (int) $productId;
+                    })
+                    ->filter(function ($productId) {
+                        return $productId > 0;
+                    })
+                    ->unique()
+                    ->values();
+
+                foreach ($productIds as $productId) {
+                    $ai->logEvent((string) $user->id, $productId, 'purchase');
+                }
+            } catch (\Throwable $e) {
+                // Không chặn luồng chính nếu AI service lỗi
+            }
+
             Cache::tags(['products', 'warehouses', 'orders'])->flush();
 
             return response()->json([
@@ -580,7 +615,9 @@ class OrderController extends Controller
                 $query->where('status', $status);
             }
 
-            $items = $query->get()->map(fn(Order $order) => $this->buildOrderPayload($order))->values();
+            $items = $query->get()->map(function (Order $order) {
+                return $this->buildOrderPayload($order);
+            })->values();
 
             return response()->json([
                 'success' => true,
@@ -687,7 +724,7 @@ class OrderController extends Controller
         }
     }
 
-    public function completeMyOrder(Request $request, string $id)
+    public function completeMyOrder(Request $request, string $id, AiSearchClient $ai)
     {
         try {
             $order = DB::transaction(function () use ($request, $id) {
@@ -742,7 +779,7 @@ class OrderController extends Controller
         }
     }
 
-    public function submitMyOrderEvaluate(Request $request, string $id)
+    public function submitMyOrderEvaluate(Request $request, string $id, NotificationService $notificationService)
     {
         try {
             $validated = $request->validate([
@@ -760,7 +797,8 @@ class OrderController extends Controller
                 'reviews.*.delete_media_ids.*' => ['integer', 'exists:evaluate_medias,id'],
             ]);
 
-            $order = DB::transaction(function () use ($request, $id, $validated) {
+            $reviewEvents = [];
+            $order = DB::transaction(function () use ($request, $id, $validated, &$reviewEvents) {
                 $lockedOrder = Order::query()
                     ->where('id', (int) $id)
                     ->where('user_id', (int) $request->user()->id)
@@ -784,8 +822,12 @@ class OrderController extends Controller
 
                 $orderProductIds = $lockedOrder->orderDetails
                     ->pluck('product_id')
-                    ->map(fn($v) => (int) $v)
-                    ->filter(fn($v) => $v > 0)
+                    ->map(function ($v) {
+                        return (int) $v;
+                    })
+                    ->filter(function ($v) {
+                        return $v > 0;
+                    })
                     ->unique()
                     ->values()
                     ->all();
@@ -814,8 +856,12 @@ class OrderController extends Controller
                         'has_media_files_input' => array_key_exists('media_files', $row),
                         'media_files'           => is_array($row['media_files'] ?? null) ? $row['media_files'] : [],
                         'delete_media_ids'      => collect($row['delete_media_ids'] ?? [])
-                            ->map(fn($id) => (int) $id)
-                            ->filter(fn($id) => $id > 0)
+                            ->map(function ($id) {
+                                return (int) $id;
+                            })
+                            ->filter(function ($id) {
+                                return $id > 0;
+                            })
                             ->values()
                             ->all(),
                     ];
@@ -825,14 +871,18 @@ class OrderController extends Controller
                     throw new \RuntimeException('Khong co du lieu danh gia hop le');
                 }
 
-                $submittedProductIds = collect($reviewRows)->pluck('product_id')->map(fn($v) => (int) $v)->values()->all();
+                $submittedProductIds = collect($reviewRows)->pluck('product_id')->map(function ($v) {
+                    return (int) $v;
+                })->values()->all();
                 $existingEvaluates   = Evaluate::query()
                     ->with(['medias'])
                     ->where('order_id', (int) $lockedOrder->id)
                     ->whereIn('product_id', $submittedProductIds)
                     ->lockForUpdate()
                     ->get()
-                    ->keyBy(fn(Evaluate $evaluate) => (int) ($evaluate->product_id ?? 0));
+                    ->keyBy(function (Evaluate $evaluate) {
+                        return (int) ($evaluate->product_id ?? 0);
+                    });
 
                 foreach ($reviewRows as $row) {
                     $productId = (int) $row['product_id'];
@@ -852,7 +902,9 @@ class OrderController extends Controller
                         ]);
                     }
 
-                    $deleteMediaIds = collect($row['delete_media_ids'] ?? [])->filter(fn($id) => $id > 0)->values();
+                    $deleteMediaIds = collect($row['delete_media_ids'] ?? [])->filter(function ($id) {
+                        return $id > 0;
+                    })->values();
                     if ($deleteMediaIds->isNotEmpty()) {
                         $mediasToDelete = EvaluateMedia::query()
                             ->where('evaluate_id', (int) $evaluate->id)
@@ -904,6 +956,11 @@ class OrderController extends Controller
                             'public_id'   => (string) ($upload['public_id'] ?? ''),
                         ]);
                     }
+
+                    $reviewEvents[] = $evaluate->fresh([
+                        'order.user.profile',
+                        'product:id,name',
+                    ]);
                 }
 
                 return $lockedOrder->fresh([
@@ -917,9 +974,15 @@ class OrderController extends Controller
 
             Cache::tags(['evaluates', 'orders'])->flush();
 
+            foreach ($reviewEvents as $evaluateEvent) {
+                if ($evaluateEvent instanceof Evaluate) {
+                    $notificationService->notifyEvaluateSubmitted($evaluateEvent);
+                }
+            }
+
             return response()->json([
                 'success' => true,
-                'message' => 'Danh gia san pham thanh cong',
+                'message' => 'Đánh giá sản phẩm thành công',
                 'data'    => $this->buildOrderPayload($order),
             ], 200);
         } catch (ValidationException $e) {
@@ -937,7 +1000,7 @@ class OrderController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Gui danh gia that bai',
+                'message' => 'Gửi đánh giá thất bại',
                 'error'   => $e->getMessage(),
             ], 500);
         }
@@ -978,17 +1041,21 @@ class OrderController extends Controller
                                 'is_default' => (bool) ($info->default ?? false),
                             ];
                         })
-                        ->sortByDesc(fn($row) => $row['is_default'] ? 1 : 0)
+                        ->sortByDesc(function ($row) {
+                            return $row['is_default'] ? 1 : 0;
+                        })
                         ->values(),
                 ];
             })->values();
 
             $payments = collect([$codPayment])
-                ->map(fn(Payment $payment) => [
-                    'id'     => (int) $payment->id,
-                    'name'   => (string) ($payment->name ?? ''),
-                    'status' => (string) ($payment->status ?? ''),
-                ])
+                ->map(function (Payment $payment) {
+                    return [
+                        'id'     => (int) $payment->id,
+                        'name'   => (string) ($payment->name ?? ''),
+                        'status' => (string) ($payment->status ?? ''),
+                    ];
+                })
                 ->values();
 
             return response()->json([
@@ -1075,10 +1142,8 @@ class OrderController extends Controller
                         throw new \RuntimeException("Mau da chon khong hop le cho san pham {$product->name}");
                     }
 
-                    $available = $this->getAvailableStock((int) $product->id, $colorId);
-                    if ((int) $row['quantity'] > $available) {
-                        throw new \RuntimeException("San pham {$product->name} khong du ton kho");
-                    }
+                    $availability = $this->resolveStockAvailability((int) $product->id, $colorId, (int) $row['quantity']);
+                    $this->ensureCheckoutAvailability($product->name, $availability);
 
                     $price = round((float) $row['unit_price'], 2);
 
@@ -1178,7 +1243,9 @@ class OrderController extends Controller
             $paginator      = $query->paginate($perPage, ['*'], 'page', $page);
             $vnpayPaymentId = $this->resolveVNPayPaymentId();
             $items          = collect($paginator->items())
-                ->map(fn(Order $order) => $this->buildAdminOrderPayload($order, false, $vnpayPaymentId))
+                ->map(function (Order $order) use ($vnpayPaymentId) {
+                    return $this->buildAdminOrderPayload($order, false, $vnpayPaymentId);
+                })
                 ->values();
 
             return response()->json([
@@ -1201,6 +1268,136 @@ class OrderController extends Controller
                 'error'   => $e->getMessage(),
             ], 500);
         }
+    }
+
+    public function adminEvaluates(Request $request)
+    {
+        try {
+            $admin = $request->user();
+            if ((string) ($admin->role ?? '') !== 'admin') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ban khong co quyen xem danh gia.',
+                ], 403);
+            }
+
+            $q = trim((string) $request->query('q', ''));
+            $perPage = max(1, min(50, (int) $request->query('per_page', 10)));
+
+            $query = Evaluate::query()
+                ->with([
+                    'product:id,name',
+                    'product.images:id,product_id,url',
+                    'order:id',
+                    'order.user:id,username',
+                    'order.user.profile:id,user_id,name,avatar',
+                    'medias:id,evaluate_id,type,url',
+                ])
+                ->when($q !== '', function ($builder) use ($q) {
+                    $builder->where(function ($inner) use ($q) {
+                        $inner->where('content', 'like', "%{$q}%")
+                            ->orWhere('reply', 'like', "%{$q}%")
+                            ->orWhereHas('product', function ($productQ) use ($q) {
+                                $productQ->where('name', 'like', "%{$q}%");
+                            })
+                            ->orWhereHas('order.user', function ($userQ) use ($q) {
+                                $userQ->where('username', 'like', "%{$q}%")
+                                    ->orWhereHas('profile', function ($profileQ) use ($q) {
+                                        $profileQ->where('name', 'like', "%{$q}%");
+                                    });
+                            });
+                    });
+                })
+                ->orderByDesc('created_at')
+                ->orderByDesc('id');
+
+            $paginator = $query->paginate($perPage);
+
+            $items = collect($paginator->items())->map(function (Evaluate $evaluate) {
+                $user = $evaluate->order?->user;
+                $profile = $user?->profile;
+                $firstMedia = collect($evaluate->medias ?? [])
+                    ->first(function ($media) {
+                        return str_starts_with(strtolower((string) ($media->type ?? '')), 'image');
+                    });
+
+                return [
+                    'id' => (int) ($evaluate->id ?? 0),
+                    'order_id' => (int) ($evaluate->order_id ?? 0),
+                    'product_id' => (int) ($evaluate->product_id ?? 0),
+                    'product_name' => (string) ($evaluate->product?->name ?? 'San pham'),
+                    'product_image' => (string) ($evaluate->product?->images?->first()?->url ?? ''),
+                    'customer_name' => (string) ($profile?->name ?: $user?->username ?: 'Khach hang'),
+                    'rating' => (float) ($evaluate->rating ?? 0),
+                    'content' => $evaluate->content === null ? null : (string) $evaluate->content,
+                    'reply' => $evaluate->reply === null ? null : (string) $evaluate->reply,
+                    'created_at' => optional($evaluate->created_at)?->toISOString(),
+                    'image_url' => (string) ($firstMedia?->url ?? ''),
+                ];
+            })->values();
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'items' => $items,
+                    'meta' => [
+                        'current_page' => $paginator->currentPage(),
+                        'per_page' => $paginator->perPage(),
+                        'total' => $paginator->total(),
+                        'last_page' => $paginator->lastPage(),
+                    ],
+                ],
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Lay danh sach danh gia that bai',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function replyEvaluate(Request $request, Evaluate $evaluate, NotificationService $notificationService)
+    {
+        $admin = $request->user();
+
+        if ((string) ($admin->role ?? '') !== 'admin') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Bạn không có quyền phải hồi đánh giá',
+            ], 403);
+        }
+
+        $validated = $request->validate([
+            'reply' => ['required', 'string', 'max:2000'],
+        ]);
+
+        $reply = trim((string) ($validated['reply'] ?? ''));
+        if ($reply === '') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Nội dung phản hồi không được để trống.',
+            ], 422);
+        }
+
+        $evaluate->update([
+            'reply' => $reply,
+        ]);
+
+        Cache::tags(['evaluates', 'orders', 'products'])->flush();
+        $notificationService->notifyEvaluateReply($evaluate->fresh([
+            'order.user',
+            'product:id,name',
+        ]));
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Phản hồi đánh giá thành công.',
+            'data' => [
+                'id' => (int) ($evaluate->id ?? 0),
+                'reply' => (string) ($evaluate->reply ?? ''),
+            ],
+        ]);
     }
 
     public function adminOrderDetail(string $id)
@@ -1275,7 +1472,9 @@ class OrderController extends Controller
                     throw new \RuntimeException('Chi co the duyet don o trang thai dang duyet');
                 }
 
-                $detailIds = $order->orderDetails->pluck('id')->map(fn($v) => (int) $v)->values()->all();
+                $detailIds = $order->orderDetails->pluck('id')->map(function ($v) {
+                    return (int) $v;
+                })->values()->all();
                 $inputMap  = [];
 
                 foreach ($validated['allocations'] as $row) {
@@ -1571,8 +1770,12 @@ class OrderController extends Controller
         }
 
         $cartDetailIds = collect($validated['cart_detail_ids'] ?? [])
-            ->map(fn($id) => (int) $id)
-            ->filter(fn($id) => $id > 0)
+            ->map(function ($id) {
+                return (int) $id;
+            })
+            ->filter(function ($id) {
+                return $id > 0;
+            })
             ->unique()
             ->values()
             ->all();
@@ -1607,8 +1810,12 @@ class OrderController extends Controller
         ], $tierId, $lockRows, $cart);
 
         $selectedDiscountIds = collect($validated['discount_ids'] ?? [])
-            ->map(fn($id) => (int) $id)
-            ->filter(fn($id) => $id > 0)
+            ->map(function ($id) {
+                return (int) $id;
+            })
+            ->filter(function ($id) {
+                return $id > 0;
+            })
             ->unique()
             ->values()
             ->all();
@@ -1748,7 +1955,9 @@ class OrderController extends Controller
         unset($query['vnp_SecureHash'], $query['vnp_SecureHashType']);
         $query = array_filter(
             $query,
-            static fn($key) => is_string($key) && str_starts_with($key, 'vnp_'),
+            static function ($key) {
+                return is_string($key) && str_starts_with($key, 'vnp_');
+            },
             ARRAY_FILTER_USE_KEY
         );
         ksort($query);
@@ -1841,14 +2050,20 @@ class OrderController extends Controller
 
         $evaluateMap        = $this->getOrderEvaluateMap((int) $order->id);
         $reviewableProducts = $items
-            ->groupBy(fn($item) => (int) ($item['product_id'] ?? 0))
+            ->groupBy(function ($item) {
+                return (int) ($item['product_id'] ?? 0);
+            })
             ->map(function ($group, $productId) use ($evaluateMap, $order) {
                 $first      = $group->first() ?? [];
                 $pid        = (int) $productId;
                 $evaluate   = $evaluateMap[$pid] ?? null;
                 $colorNames = collect($group)
-                    ->map(fn($row) => trim((string) ($row['color_name'] ?? '')))
-                    ->filter(fn($v) => $v !== '')
+                    ->map(function ($row) {
+                        return trim((string) ($row['color_name'] ?? ''));
+                    })
+                    ->filter(function ($v) {
+                        return $v !== '';
+                    })
                     ->unique()
                     ->values()
                     ->all();
@@ -1857,14 +2072,18 @@ class OrderController extends Controller
                     'product_id'     => $pid,
                     'name'           => (string) ($first['name'] ?? 'San pham'),
                     'image'          => (string) ($first['image'] ?? ''),
-                    'total_quantity' => (int) collect($group)->sum(fn($row) => (int) ($row['quantity'] ?? 0)),
+                    'total_quantity' => (int) collect($group)->sum(function ($row) {
+                        return (int) ($row['quantity'] ?? 0);
+                    }),
                     'variants'       => $colorNames,
                     'is_evaluated'   => $evaluate !== null,
                     'can_review'     => (string) $order->status === 'completed',
                     'evaluate'       => $evaluate,
                 ];
             })
-            ->sortBy(fn($row) => (int) ($row['product_id'] ?? 0))
+            ->sortBy(function ($row) {
+                return (int) ($row['product_id'] ?? 0);
+            })
             ->values();
 
         $evaluatedCount  = (int) $reviewableProducts->where('is_evaluated', true)->count();
@@ -1884,7 +2103,9 @@ class OrderController extends Controller
                 'price'             => round((float) ($row->price ?? 0), 2),
             ];
         })->values();
-        $discountPrice = (float) $order->orderDiscounts->sum(fn($row) => (float) ($row->price ?? 0));
+        $discountPrice = (float) $order->orderDiscounts->sum(function ($row) {
+            return (float) ($row->price ?? 0);
+        });
         $shippingFee   = self::SHIPPING_FEE;
         $totalPrice    = max(0, $productSubtotal - $discountPrice + $shippingFee);
 
@@ -1950,6 +2171,7 @@ class OrderController extends Controller
                 'order_id'   => (int) ($evaluate->order_id ?? 0),
                 'rating'     => (float) ($evaluate->rating ?? 0),
                 'content'    => $evaluate->content === null ? null : (string) $evaluate->content,
+                'reply'      => $evaluate->reply === null ? null : (string) $evaluate->reply,
                 'created_at' => optional($evaluate->created_at)?->toISOString(),
                 'medias'     => collect($evaluate->medias ?? [])->map(function ($media) {
                     return [
@@ -1980,7 +2202,9 @@ class OrderController extends Controller
             return $payload;
         }
 
-        $detailMap        = $order->orderDetails->keyBy(fn($detail) => (int) $detail->id);
+        $detailMap        = $order->orderDetails->keyBy(function ($detail) {
+            return (int) $detail->id;
+        });
         $payload['items'] = collect($payload['items'])->map(function ($item) use ($detailMap) {
             $detail    = $detailMap->get((int) ($item['id'] ?? 0));
             $productId = (int) ($item['product_id'] ?? 0);
@@ -2094,8 +2318,12 @@ class OrderController extends Controller
     private function buildCheckoutDraft($user, array $validated, ?int $tierId, bool $lockRows = false, ?Cart $cart = null): array
     {
         $cartDetailIds = collect($validated['cart_detail_ids'] ?? [])
-            ->map(fn($id) => (int) $id)
-            ->filter(fn($id) => $id > 0)
+            ->map(function ($id) {
+                return (int) $id;
+            })
+            ->filter(function ($id) {
+                return $id > 0;
+            })
             ->unique()
             ->values()
             ->all();
@@ -2140,10 +2368,8 @@ class OrderController extends Controller
                 throw new \RuntimeException('Không tìm thấy sản phẩm');
             }
 
-            $stockQty = $this->getAvailableStock($productId, $colorId);
-            if ($qty > $stockQty) {
-                throw new \RuntimeException("Sản phẩm {$product->name} không đủ tồn kho");
-            }
+            $availability = $this->resolveStockAvailability($productId, $colorId, $qty);
+            $this->ensureCheckoutAvailability($product->name, $availability);
 
             $unitPrice    = $this->resolveUnitPrice($product->prices, $tierId, $qty);
             $lineSubtotal = $unitPrice * $qty;
@@ -2184,12 +2410,13 @@ class OrderController extends Controller
                     throw new \RuntimeException('San pham trong gio hang khong ton tai');
                 }
 
-                $qty      = max(1, (int) $detail->quantity);
-                $stockQty = $this->getAvailableStock((int) $detail->product_id, $detail->color_id ? (int) $detail->color_id : null);
-
-                if ($qty > $stockQty) {
-                    throw new \RuntimeException("San pham {$product->name} khong du ton kho");
-                }
+                $qty = max(1, (int) $detail->quantity);
+                $availability = $this->resolveStockAvailability(
+                    (int) $detail->product_id,
+                    $detail->color_id ? (int) $detail->color_id : null,
+                    $qty
+                );
+                $this->ensureCheckoutAvailability($product->name, $availability);
 
                 $unitPrice    = $this->resolveUnitPrice($product->prices, $tierId, $qty);
                 $lineSubtotal = $unitPrice * $qty;
@@ -2219,7 +2446,9 @@ class OrderController extends Controller
             'is_cart_checkout'   => $isCartCheckout,
             'product_subtotal'   => round($productSubtotal, 2),
             'category_subtotals' => collect($categorySubtotals)
-                ->map(fn($subtotal) => round((float) $subtotal, 2))
+                ->map(function ($subtotal) {
+                    return round((float) $subtotal, 2);
+                })
                 ->all(),
             'order_detail_rows'  => $orderDetailRows,
         ];
@@ -2263,14 +2492,34 @@ class OrderController extends Controller
         return (float) ($applied->price ?? 0);
     }
 
-    private function getAvailableStock(int $productId, ?int $colorId = null): int
+    private function ensureCheckoutAvailability(string $productName, array $availability): void
+    {
+        $status = (string) ($availability['status'] ?? 'unavailable');
+
+        if ($status === 'available') {
+            return;
+        }
+
+        if ($status === 'unavailable') {
+            throw new \RuntimeException("San pham {$productName} khong kha dung");
+        }
+
+        throw new \RuntimeException("San pham {$productName} da het hang");
+    }
+
+    private function resolveStockAvailability(int $productId, ?int $colorId = null, int $requestedQuantity = 1): array
     {
         $query = WarehouseDetail::query()
             ->where('product_id', $productId)
             ->where('status', 'actived');
 
         $this->applyColorFilter($query, $colorId);
-        $warehouseQty = (int) $query->sum('quantity');
+        $warehouseData = $query
+            ->selectRaw('COUNT(*) as active_row_count, COALESCE(SUM(quantity), 0) as stock_quantity')
+            ->first();
+
+        $activeRowCount = (int) ($warehouseData->active_row_count ?? 0);
+        $warehouseQty = (int) ($warehouseData->stock_quantity ?? 0);
 
         $reservedQuery = OrderDetail::query()
             ->join('orders', 'orders.id', '=', 'order_details.order_id')
@@ -2284,8 +2533,33 @@ class OrderController extends Controller
         }
 
         $reservedQty = (int) $reservedQuery->sum('order_details.quantity');
+        $availableQty = max(0, $warehouseQty - $reservedQty);
 
-        return max(0, $warehouseQty - $reservedQty);
+        if ($activeRowCount <= 0) {
+            return [
+                'status' => 'unavailable',
+                'available_quantity' => 0,
+            ];
+        }
+
+        if ($availableQty <= 0) {
+            return [
+                'status' => 'out_of_stock',
+                'available_quantity' => 0,
+            ];
+        }
+
+        if ($requestedQuantity > $availableQty) {
+            return [
+                'status' => 'insufficient_stock',
+                'available_quantity' => $availableQty,
+            ];
+        }
+
+        return [
+            'status' => 'available',
+            'available_quantity' => $availableQty,
+        ];
     }
 
     private function applyColorFilter(Builder $query, ?int $colorId): void
