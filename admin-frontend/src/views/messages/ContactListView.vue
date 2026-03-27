@@ -105,6 +105,11 @@ async function fetchContacts() {
   try {
     const res = await MessageService.fetchContacts(keyword.value);
     contacts.value = res?.contacts || [];
+    window.dispatchEvent(
+      new CustomEvent("admin-contacts-updated", {
+        detail: { contacts: contacts.value },
+      }),
+    );
   } catch (e) {
     error.value =
       e?.response?.data?.message || e?.message || "Không tải được danh sách liên hệ.";
