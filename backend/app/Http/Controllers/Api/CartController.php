@@ -8,6 +8,7 @@ use App\Models\WarehouseDetail;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Services\AiSearchClient;
 
 class CartController extends Controller
 {
@@ -33,7 +34,7 @@ class CartController extends Controller
         }
     }
 
-    public function store(Request $request)
+    public function store(Request $request, AiSearchClient $ai)
     {
         try {
             $validated = $request->validate([
@@ -87,7 +88,7 @@ class CartController extends Controller
                 $stockQty     = $this->getAvailableStock((int) $validated['product_id'], $colorId);
 
                 if ($nextQuantity > $stockQty) {
-                    throw new \RuntimeException('So luong them vao gio hang vuot qua ton kho');
+                    throw new \RuntimeException('Số lượng thêm vào giỏ hàng vượt quá tồn kho, vui lòng kiểm tra lại giỏ hàng');
                 }
 
                 if ($detail) {
@@ -103,6 +104,13 @@ class CartController extends Controller
                     'quantity'   => $quantity,
                 ]);
             });
+
+            // Ghi nhận hành vi thêm giỏ hàng cho engine gợi ý
+            try {
+                $ai->logEvent((string) $userId, (int) $validated['product_id'], 'cart');
+            } catch (\Throwable $e) {
+                // Không chặn luồng chính nếu AI service lỗi
+            }
 
             return response()->json([
                 'success' => true,
@@ -300,18 +308,9 @@ class CartController extends Controller
             'cartDetails.color',
         ]);
 
-        $stockRows = WarehouseDetail::query()
-            ->select('product_id', 'color_id', DB::raw('SUM(quantity) as stock_quantity'))
-            ->where('status', 'actived')
-            ->groupBy('product_id', 'color_id')
-            ->get();
+        $availabilityMap = $this->buildAvailabilityMap($cart->cartDetails);
 
-        $stockMap = $stockRows->keyBy(function ($row) {
-            $safeColor = $row->color_id == null ? 'null' : (string) $row->color_id;
-            return "{$row->product_id}-{$safeColor}";
-        });
-
-        $items = $cart->cartDetails->map(function ($detail) use ($stockMap, $tierId) {
+        $items = $cart->cartDetails->map(function ($detail) use ($availabilityMap, $tierId) {
             $product = $detail->product;
             $safeColor = $detail->color_id == null ? 'null' : (string) $detail->color_id;
             $stockKey = "{$detail->product_id}-{$safeColor}";
@@ -319,6 +318,7 @@ class CartController extends Controller
             $pricing = $this->resolveUnitPriceWithMinQty($product?->prices, $tierId, $qty);
             $unitPrice = (float) ($pricing['unit_price'] ?? 0);
             $minQty    = (int) ($pricing['min_quantity'] ?? 1);
+            $availability = $availabilityMap[$stockKey] ?? $this->makeAvailabilityPayload(0, 0, $qty);
 
             return [
                 'id'             => (int) $detail->id,
@@ -330,7 +330,11 @@ class CartController extends Controller
                 'unit_price'     => $unitPrice,
                 'total_price'    => round($unitPrice * $qty, 2),
                 'price_min_quantity' => $minQty,
-                'stock_quantity' => (int) ($stockMap[$stockKey]->stock_quantity ?? 0),
+                'stock_quantity' => (int) ($availability['available_quantity'] ?? 0),
+                'availability_status' => (string) ($availability['status'] ?? 'unavailable'),
+                'availability_message' => (string) ($availability['message'] ?? 'San pham khong kha dung'),
+                'is_available' => (bool) ($availability['is_available'] ?? false),
+                'can_checkout' => (bool) ($availability['can_checkout'] ?? false),
                 'product'        => $product,
             ];
         })->values();
@@ -339,6 +343,95 @@ class CartController extends Controller
             'id'      => (int) $cart->id,
             'user_id' => (int) $cart->user_id,
             'items'   => $items,
+        ];
+    }
+
+    private function buildAvailabilityMap($cartDetails): array
+    {
+        $pairs = collect($cartDetails)
+            ->map(fn($detail) => [
+                'product_id' => (int) ($detail->product_id ?? 0),
+                'color_id' => $detail->color_id == null ? null : (int) $detail->color_id,
+                'quantity' => max(1, (int) ($detail->quantity ?? 1)),
+            ])
+            ->filter(fn($pair) => $pair['product_id'] > 0)
+            ->values();
+
+        if ($pairs->isEmpty()) {
+            return [];
+        }
+
+        $productIds = $pairs->pluck('product_id')->unique()->values();
+
+        $stockRows = WarehouseDetail::query()
+            ->select(
+                'product_id',
+                'color_id',
+                DB::raw('COUNT(*) as active_row_count'),
+                DB::raw('SUM(quantity) as stock_quantity')
+            )
+            ->where('status', 'actived')
+            ->whereIn('product_id', $productIds)
+            ->groupBy('product_id', 'color_id')
+            ->get()
+            ->keyBy(function ($row) {
+                $safeColor = $row->color_id == null ? 'null' : (string) $row->color_id;
+                return "{$row->product_id}-{$safeColor}";
+            });
+
+        return $pairs->mapWithKeys(function ($pair) use ($stockRows) {
+            $safeColor = $pair['color_id'] == null ? 'null' : (string) $pair['color_id'];
+            $key = "{$pair['product_id']}-{$safeColor}";
+            $stockRow = $stockRows->get($key);
+
+            return [
+                $key => $this->makeAvailabilityPayload(
+                    (int) ($stockRow->active_row_count ?? 0),
+                    (int) ($stockRow->stock_quantity ?? 0),
+                    (int) $pair['quantity']
+                ),
+            ];
+        })->all();
+    }
+
+    private function makeAvailabilityPayload(int $activeRowCount, int $availableQuantity, int $requestedQuantity = 1): array
+    {
+        if ($activeRowCount <= 0) {
+            return [
+                'status' => 'unavailable',
+                'message' => 'San pham khong kha dung',
+                'available_quantity' => 0,
+                'is_available' => false,
+                'can_checkout' => false,
+            ];
+        }
+
+        if ($availableQuantity <= 0) {
+            return [
+                'status' => 'out_of_stock',
+                'message' => 'San pham da het hang',
+                'available_quantity' => 0,
+                'is_available' => false,
+                'can_checkout' => false,
+            ];
+        }
+
+        if ($requestedQuantity > $availableQuantity) {
+            return [
+                'status' => 'insufficient_stock',
+                'message' => 'San pham da het hang',
+                'available_quantity' => $availableQuantity,
+                'is_available' => false,
+                'can_checkout' => false,
+            ];
+        }
+
+        return [
+            'status' => 'available',
+            'message' => '',
+            'available_quantity' => $availableQuantity,
+            'is_available' => true,
+            'can_checkout' => true,
         ];
     }
 

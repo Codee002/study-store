@@ -328,20 +328,20 @@ class PriceQuotationController extends Controller
         if ($inputProductId > 0) {
             $matchedProduct = $productsById->get($inputProductId);
             if (! $matchedProduct) {
-                $errors[] = 'Khong tim thay san pham theo product_id';
+                $errors[] = 'Không tìm thấy sản phẩm theo product_id';
             }
         } elseif ($inputProductName !== '') {
             $matchedProduct = $productsByName->get($this->normalizeLookupText($inputProductName))
                 ?? $productsByName->get($this->normalizeLookupTextInsensitive($inputProductName));
             if (! $matchedProduct) {
-                $errors[] = 'Khong tim thay san pham theo product_name';
+                $errors[] = 'Không tìm thấy sản phẩm theo product_name';
             }
         } else {
-            $errors[] = 'Thieu product_id hoac product_name';
+            $errors[] = 'Thiếu product_id hoặc product_name';
         }
 
         if ($quantity <= 0) {
-            $errors[] = 'So luong dat mua phai lon hon 0';
+            $errors[] = 'Số lượng đặt mua phải lớn hơn 0';
         }
 
         $matchedColor = null;
@@ -356,18 +356,18 @@ class PriceQuotationController extends Controller
                 && $this->normalizeLookupText($inputProductName) !== $this->normalizeLookupText((string) ($matchedProduct->name ?? ''))
                 && $this->normalizeLookupTextInsensitive($inputProductName) !== $this->normalizeLookupTextInsensitive((string) ($matchedProduct->name ?? ''))
             ) {
-                $warnings[] = 'product_name khong khop voi du lieu san pham, he thong uu tien product_id';
+                $warnings[] = 'product_name không khớp với dữ liệu sản phẩm, hệ thống ưu tiên product_id';
             }
 
             $productUnit = trim((string) ($matchedProduct->unit ?? ''));
             if ($inputUnit !== '' && mb_strtolower($inputUnit) !== mb_strtolower($productUnit)) {
-                $errors[] = 'Unit khong khop voi san pham';
+                $errors[] = 'Unit không khớp với sản phẩm';
             }
 
             $colorOptions = collect($matchedProduct->colors ?? []);
             if ($colorOptions->isNotEmpty()) {
                 if ($inputColor === '') {
-                    $errors[] = 'San pham yeu cau color_option';
+                    $errors[] = 'Sản phẩm yêu cầu color_option';
                 } else {
                     $matchedColor = $colorOptions->first(function ($color) use ($inputColor) {
                         $colorName = trim((string) ($color->color_name ?? ''));
@@ -376,11 +376,11 @@ class PriceQuotationController extends Controller
                     });
 
                     if (! $matchedColor) {
-                        $errors[] = 'Mau sac khong ton tai voi san pham';
+                        $errors[] = 'Màu sắc không tồn tại với sản phẩm';
                     }
                 }
             } elseif ($inputColor !== '' && ! in_array($this->normalizeLookupText($inputColor), ['mac dinh', 'default'], true)) {
-                $warnings[] = 'San pham nay khong co phan loai mau, bo qua color_option';
+                $warnings[] = 'Sản phẩm này không có màu';
             }
 
             $stockKey = $this->stockMapKey(
@@ -390,14 +390,14 @@ class PriceQuotationController extends Controller
             $availableStock = (int) ($stockMap[$stockKey] ?? 0);
 
             if ($quantity > 0 && $availableStock <= 0) {
-                $errors[] = 'San pham hoac mau dang het hang';
+                $errors[] = 'Sản phẩm hoặc màu đang hết hàng';
             } elseif ($quantity > $availableStock) {
-                $errors[] = 'So luong vuot qua ton kho hien tai';
+                $errors[] = 'Số lượng vượt quá tồn kho hiện tại';
             }
 
             $pricing = $this->resolveUnitPriceForTier($matchedProduct->prices ?? [], $tierId, $quantity);
             if ($quantity > 0 && ! $pricing) {
-                $errors[] = 'San pham chua co bang gia cho tier hien tai';
+                $errors[] = 'Sản phẩm chưa có bảng giá cho tier hiện tại';
             } elseif ($pricing) {
                 $unitPrice = (float) ($pricing['unit_price'] ?? 0);
                 $appliedMinQuantity = (int) ($pricing['min_quantity'] ?? 1);
