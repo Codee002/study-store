@@ -25,10 +25,25 @@
           <div class="card card-soft mb-3">
             <div class="card-body">
               <div class="d-flex gap-3 align-items-start flex-column flex-md-row">
-                <div class="thumb thumb-xl">
-                  <img v-if="firstImage" :src="firstImage" alt="thumb" />
-                  <div v-else class="thumb placeholder">
-                    <i class="fa-regular fa-image"></i>
+                <div class="gallery-wrap">
+                  <div class="thumb thumb-xl">
+                    <img v-if="activeImage" :src="activeImage" alt="thumb" />
+                    <div v-else class="thumb placeholder">
+                      <i class="fa-regular fa-image"></i>
+                    </div>
+                  </div>
+
+                  <div v-if="imageList.length > 1" class="gallery-grid mt-2">
+                    <button
+                      v-for="(img, idx) in imageList"
+                      :key="`product-image-${idx}`"
+                      type="button"
+                      class="gallery-thumb"
+                      :class="{ active: idx === activeImageIndex }"
+                      @click="activeImageIndex = idx"
+                    >
+                      <img :src="img" :alt="`thumb-${idx + 1}`" />
+                    </button>
                   </div>
                 </div>
                 <div class="flex-grow-1">
@@ -167,13 +182,16 @@ const stockSummary = ref({
   colors: [],
 });
 const loading = ref(false);
+const activeImageIndex = ref(0);
 
 const id = computed(() => props.id || route.params.id);
 
-const firstImage = computed(() => {
+const imageList = computed(() => {
   const imgs = product.value?.images || [];
-  return imgs.length ? imgs[0].url : "";
+  return imgs.map((img) => img?.url).filter(Boolean);
 });
+
+const activeImage = computed(() => imageList.value[activeImageIndex.value] || imageList.value[0] || "");
 
 const sortedPrices = computed(() => {
   const prices = product.value?.prices || [];
@@ -190,6 +208,7 @@ async function fetchData() {
     const res = await ProductService.get(id.value);
     product.value = res.product || null;
     stockSummary.value = res.stock_summary || stockSummary.value;
+    activeImageIndex.value = 0;
   } catch (e) {
     console.error(e);
     await Swal.fire("Lỗi", "Không thể tải chi tiết sản phẩm", "error");
@@ -222,14 +241,39 @@ onMounted(fetchData);
 .thumb img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
 }
 .thumb.placeholder {
   color: var(--font-color);
 }
 .thumb.thumb-xl {
-  width: 140px;
-  height: 140px;
+  width: 220px;
+  height: 220px;
+}
+.gallery-wrap {
+  width: 220px;
+  flex: 0 0 auto;
+}
+.gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.gallery-thumb {
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  overflow: hidden;
+  padding: 0;
+  background: var(--hover-background-color);
+  aspect-ratio: 1 / 1;
+}
+.gallery-thumb.active {
+  border-color: var(--hover-border-color);
+}
+.gallery-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 .badge-on {
   background: color-mix(in srgb, #16a34a 16%, transparent);
