@@ -62,6 +62,7 @@ import OrderDetailView from "../views/orders/OrderDetailView.vue";
 import ProductStatsView from "../views/reports/ProductStatsView.vue";
 import ChatView from "../views/messages/ChatView.vue";
 import ContactListView from "../views/messages/ContactListView.vue";
+import EvaluateListView from "../views/evaluates/EvaluateListView.vue";
 
 import AuthService from "@/services/auth.service";
 
@@ -321,6 +322,13 @@ const routes = [
         component: DiscountDetailView,
         meta: { title: "Chi tiết khuyến mãi" },
         props: true,
+      },
+
+      {
+        path: "/evaluates",
+        name: "evaluates.list",
+        component: EvaluateListView,
+        meta: { title: "Đánh giá" },
       },
 
       // Prices

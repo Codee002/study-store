@@ -112,6 +112,15 @@
 
       <RouterLink
         class="nav-link"
+        :class="{ active: route.name?.toString().startsWith('evaluates.') }"
+        to="/evaluates"
+      >
+        <i class="fa-solid fa-star me-2"></i>
+        <span v-if="!collapsed">Đánh giá</span>
+      </RouterLink>
+
+      <RouterLink
+        class="nav-link"
         :class="{
           active: route.name?.toString().startsWith('payments.'),
         }"
@@ -157,11 +166,13 @@
 
 <script setup>
 import router from "@/routers";
+import { useAdminHeaderState } from "@/composables/useAdminHeaderState";
 import authService from "@/services/auth.service";
 import Swal from "sweetalert2";
 import { useRoute } from "vue-router";
 defineProps({ collapsed: { type: Boolean, default: false } });
 const route = useRoute();
+const headerStore = useAdminHeaderState();
 
 const onLogout = async () => {
   const confirm = await Swal.fire({
@@ -173,9 +184,11 @@ const onLogout = async () => {
   });
   if (confirm.isConfirmed) {
     try {
+      headerStore.resetHeaderState();
       await authService.logout();
       router.push("/login");
     } catch (e) {
+      headerStore.resetHeaderState();
       await Swal.fire("Lỗi!", "Đăng xuất không thành công!", "error");
       router.push("/login");
       console.error("Logout error:", e);

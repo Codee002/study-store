@@ -14,7 +14,6 @@
       </div>
 
       <div class="ms-auto d-flex align-items-center gap-3">
-        <!-- Messages -->
         <div class="dropdown position-relative" ref="msgDropdownRef">
           <button
             class="icon-btn position-relative"
@@ -66,7 +65,6 @@
           </div>
         </div>
 
-        <!-- Notifications -->
         <div class="dropdown position-relative" ref="dropdownRef">
           <button
             class="icon-btn position-relative"
@@ -159,43 +157,27 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
-import notificationService from "@/services/notification.service";
-import MessageService from "@/services/message.service";
-import AuthService from "@/services/auth.service";
-import Swal from "sweetalert2";
-import { useRoute } from "vue-router";
+import { useAdminHeaderState } from "@/composables/useAdminHeaderState";
 
 const router = useRouter();
-const route = useRoute();
+const headerStore = useAdminHeaderState();
 
-const notifications = ref([]);
-const contacts = ref([]);
+const notifications = computed(() => headerStore.state.notifications);
+const contacts = computed(() => headerStore.state.contacts);
 const isOpen = ref(false);
 const isMsgOpen = ref(false);
-const isLoading = ref(false);
-const messagesLoading = ref(false);
-const hasLoaded = ref(false);
-const hasLoadedMsg = ref(false);
-const markingAll = ref(false);
 const dropdownRef = ref(null);
 const msgDropdownRef = ref(null);
-const toast = Swal.mixin({
-  toast: true,
-  position: "bottom-end",
-  showConfirmButton: false,
-  timer: 5000,
-  timerProgressBar: true,
-});
-let subscribedChannel = null;
-const handleMessagesRead = () => loadContacts(true);
-let contactPollTimer = null;
 
-const unreadCount = computed(
-  () => notifications.value.filter((n) => !n.read_at && !n.is_read).length,
+const unreadCount = computed(() =>
+  notifications.value.filter((n) => !n.read_at && !n.is_read).length,
 );
 const unreadMessages = computed(() =>
   contacts.value.reduce((sum, c) => sum + (Number(c.unread) || 0), 0),
 );
+const isLoading = computed(() => headerStore.state.isLoadingNotifications);
+const messagesLoading = computed(() => headerStore.state.messagesLoading);
+const markingAll = computed(() => headerStore.state.markingAll);
 
 const groupedNotifications = computed(() => {
   const map = {};
@@ -222,30 +204,20 @@ const hasNotifications = computed(() =>
 );
 
 async function loadNotifications() {
-  if (!AuthService.isLoggin()) return;
-  isLoading.value = true;
-  try {
-    const res = await notificationService.list();
-    notifications.value = res?.data || res?.notifications || res || [];
-  } catch {
-    notifications.value = [];
-  } finally {
-    isLoading.value = false;
-    hasLoaded.value = true;
-  }
+  await headerStore.loadNotifications();
 }
 
 function toggle() {
   isOpen.value = !isOpen.value;
-  if (isOpen.value && !hasLoaded.value) {
+  if (isOpen.value && !headerStore.state.notificationsLoaded) {
     loadNotifications();
   }
 }
 
 function toggleMessages() {
   isMsgOpen.value = !isMsgOpen.value;
-  if (isMsgOpen.value && !hasLoadedMsg.value) {
-    loadContacts();
+  if (isMsgOpen.value && !headerStore.state.contactsLoaded) {
+    headerStore.loadContacts();
   }
 }
 
@@ -262,66 +234,24 @@ function handleClickOutside(evt) {
 function resolveTarget(item) {
   if (item.url) return item.url;
   if (item.type === "order" && item.url_id) return `/orders/${item.url_id}`;
-  if (item.type === "price-quotation" && item.url_id)
+  if (item.type === "evaluate" && item.url_id) return `/orders/${item.url_id}`;
+  if (item.type === "evaluate-reply" && item.url_id) return `/orders/${item.url_id}`;
+  if (item.type === "price-quotation" && item.url_id) {
     return `/prices/${item.url_id}/edit`;
+  }
   if (item.type === "receipt" && item.url_id) return `/receipts/${item.url_id}`;
   return "/";
 }
 
 async function openNotification(item) {
-  await markOneRead(item);
+  await headerStore.markOneRead(item);
   const target = resolveTarget(item);
   if (target) router.push(target);
   isOpen.value = false;
 }
 
-function onIncomingNotification(event) {
-  const payload = event?.detail;
-  if (!payload) return;
-  notifications.value = [
-    {
-      ...payload,
-      is_read: false,
-      read_at: null,
-      created_at: payload.created_at || new Date().toISOString(),
-    },
-    ...notifications.value,
-  ];
-}
-
-function refreshEchoAuthHeader() {
-  try {
-    const token = localStorage.getItem("access_token") || "";
-    if (window.Echo?.connector?.pusher?.config?.auth) {
-      window.Echo.connector.pusher.config.auth.headers = {
-        Authorization: `Bearer ${token}`,
-      };
-    }
-  } catch  {
-    // ignore
-  }
-}
-
-async function loadContacts(force = false) {
-  if (!AuthService.isLoggin()) return;
-  if (messagesLoading.value || (hasLoadedMsg.value && !force)) return;
-  messagesLoading.value = true;
-  try {
-    const res = await MessageService.fetchContacts();
-    contacts.value = res?.contacts || [];
-  } catch {
-    contacts.value = [];
-  } finally {
-    messagesLoading.value = false;
-    hasLoadedMsg.value = true;
-  }
-}
-
 function openChat(contact) {
-
-  contacts.value = contacts.value.map((c) =>
-    c.conversation_id === contact?.conversation_id ? { ...c, unread: 0 } : c,
-  );
+  headerStore.markConversationRead(contact?.conversation_id);
   isMsgOpen.value = false;
   if (contact?.conversation_id) {
     router.push({ name: "messages.chat", params: { id: contact.conversation_id } });
@@ -330,110 +260,13 @@ function openChat(contact) {
   }
 }
 
-function subscribeRealtime() {
-  try {
-    const raw = localStorage.getItem("currentUser");
-    const user = raw ? JSON.parse(raw) : null;
-    const userId = user?.id;
-    console.log(userId)
-    if (!userId) return;
-    if (subscribedChannel) return;
-
-    refreshEchoAuthHeader();
-
-    subscribedChannel = window.Echo?.private?.(`user.${userId}`);
-    if (!subscribedChannel) return;
-
-    subscribedChannel.listen(".NotificationPushed", (e) => {
-      const n = e?.notification || e;
-      const payload = {
-        ...n,
-        is_read: false,
-        read_at: null,
-        created_at: n?.created_at || new Date().toISOString(),
-      };
-      notifications.value = [payload, ...notifications.value];
-      window.dispatchEvent(
-        new CustomEvent("notification-received", { detail: payload }),
-      );
-      toast.fire({
-        icon: "info",
-        title: payload.title || "Thông báo mới",
-        text: payload.content || "Bạn có thông báo mới",
-      });
-    });
-
-    subscribedChannel.listen(".MessageSent", (e) => {
-      const payload = e?.detail || e;
-      if (!payload) return;
-      const isFromMe = Number(payload.user_id) === Number(userId);
-      if (!isFromMe) {
-        loadContacts(true);
-      }
-    });
-  } catch {
-    // ignore
-  }
-}
-
-function unsubscribeRealtime() {
-  try {
-    const raw = localStorage.getItem("currentUser");
-    const user = raw ? JSON.parse(raw) : null;
-    const userId = user?.id;
-    if (subscribedChannel && userId) {
-      window.Echo?.leave?.(`user.${userId}`);
-    }
-  } catch {
-    // ignore
-  }
-  subscribedChannel = null;
-}
-
-function startContactPolling() {
-  if (contactPollTimer) return;
-  // Fallback polling in case realtime socket fails
-  contactPollTimer = window.setInterval(() => {
-    loadContacts(true);
-  }, 20000);
-}
-
-function stopContactPolling() {
-  if (contactPollTimer) {
-    window.clearInterval(contactPollTimer);
-    contactPollTimer = null;
-  }
-}
-
-async function markOneRead(item) {
-  if (!item || item.is_read || item.read_at) return;
-  item.is_read = true;
-  item.read_at = new Date().toISOString();
-  try {
-    await notificationService.markAsRead(item.id || item.url_id);
-  } catch {
-    // ignore
-  }
-}
-
 async function markAllRead() {
-  if (!notifications.value.length) return;
-  markingAll.value = true;
-  notifications.value = notifications.value.map((n) => ({
-    ...n,
-    is_read: true,
-    read_at: n.read_at || new Date().toISOString(),
-  }));
-  try {
-    await notificationService.markAllAsRead();
-  } catch {
-    // ignore
-  } finally {
-    markingAll.value = false;
-  }
+  await headerStore.markAllRead();
 }
 
 function fallbackTitle(item) {
+  if (item.type === "evaluate") return "Đánh giá mới";
+  if (item.type === "evaluate-reply") return "Phản hồi đánh giá";
   if (item.type === "order") return "Cập nhật đơn hàng";
   if (item.type === "price-quotation") return "Cập nhật báo giá";
   return "Thông báo";
@@ -488,19 +321,11 @@ function formatDayLabel(key) {
 
 onMounted(() => {
   window.addEventListener("click", handleClickOutside);
-  window.addEventListener("notification-received", onIncomingNotification);
-  window.addEventListener("messages-read", handleMessagesRead);
-  subscribeRealtime();
-  loadContacts();
-  startContactPolling();
+  headerStore.initHeaderState();
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener("click", handleClickOutside);
-  window.removeEventListener("notification-received", onIncomingNotification);
-  window.removeEventListener("messages-read", handleMessagesRead);
-  unsubscribeRealtime();
-  stopContactPolling();
 });
 </script>
 
