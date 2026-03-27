@@ -28,6 +28,10 @@ class OrderService {
   async reject(id) {
     return (await this.api.post(`/${id}/reject`)).data;
   }
+
+  async replyEvaluate(evaluateId, reply) {
+    return (await this.api.post(`/evaluates/${evaluateId}/reply`, { reply })).data;
+  }
 }
 
 export default new OrderService();

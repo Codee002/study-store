@@ -182,6 +182,7 @@ const contacts = ref([]);
 const loadingMessages = ref(false);
 const sending = ref(false);
 const error = ref("");
+const syncingRead = ref(false);
 const currentAdminId = ref(getCurrentUserId());
 const channelName = computed(() =>
   currentAdminId.value ? `user.${currentAdminId.value}` : null
@@ -307,10 +308,43 @@ function upsertMessage(msg) {
   }
 }
 
+function applyReadUpdates(event) {
+  if (!event?.conversation_id) return;
+  if (String(event.conversation_id) !== String(route.params.id)) return;
+
+  const updates = Array.isArray(event.messages) ? event.messages : [];
+  if (!updates.length) return;
+
+  const otherId = currentContact.value?.id;
+  let changed = false;
+
+  messages.value = messages.value.map((message) => {
+    const matched = updates.find((item) => String(item.id) === String(message.id));
+    if (!matched) return message;
+
+    const readIds = Array.isArray(matched.read_by_user_ids) ? matched.read_by_user_ids : [];
+    changed = true;
+    return {
+      ...message,
+      is_read: readIds.includes(currentAdminId.value),
+      is_read_by_partner: otherId ? readIds.includes(otherId) : message.is_read_by_partner,
+    };
+  });
+
+  if (changed) {
+    nextTick(scrollToBottom);
+  }
+}
+
 async function fetchContacts() {
   try {
     const res = await MessageService.fetchContacts();
     contacts.value = res?.contacts || [];
+    window.dispatchEvent(
+      new CustomEvent("admin-contacts-updated", {
+        detail: { contacts: contacts.value },
+      }),
+    );
   } catch (e) {
     // swallow; shown in chat area when needed
   }
@@ -325,7 +359,11 @@ async function loadMessages(conversationId) {
     messages.value = (res?.messages || []).map(mapMessage);
     // Refresh badges after server marks unread messages as read
     await fetchContacts();
-    window.dispatchEvent(new CustomEvent("messages-read"));
+    window.dispatchEvent(
+      new CustomEvent("messages-read", {
+        detail: { conversationId },
+      }),
+    );
     await nextTick();
     scrollToBottom();
   } catch (e) {
@@ -333,6 +371,25 @@ async function loadMessages(conversationId) {
       e?.response?.data?.message || e?.message || "Không tải được cuộc trò chuyện.";
   } finally {
     loadingMessages.value = false;
+  }
+}
+
+async function syncConversationRead(conversationId) {
+  if (!conversationId || syncingRead.value) return;
+  syncingRead.value = true;
+  try {
+    const res = await MessageService.fetchMessages(conversationId);
+    messages.value = (res?.messages || []).map(mapMessage);
+    await fetchContacts();
+    window.dispatchEvent(
+      new CustomEvent("messages-read", {
+        detail: { conversationId },
+      }),
+    );
+  } catch {
+    // keep old flow intact; realtime read sync is best-effort
+  } finally {
+    syncingRead.value = false;
   }
 }
 
@@ -450,15 +507,16 @@ function handleIncomingMessage(event) {
   const normalized = mapIncoming(event);
   upsertMessage(normalized);
   nextTick(scrollToBottom);
+  syncConversationRead(route.params.id);
 }
 
 function startRealtime() {
   if (!channelName.value || !window.Echo) return;
   stopRealtime();
-  echoChannel = window.Echo.private(channelName.value).listen(
-    ".MessageSent",
-    handleIncomingMessage
-  );
+  echoChannel = window.Echo
+    .private(channelName.value)
+    .listen(".MessageSent", handleIncomingMessage)
+    .listen(".MessageReadUpdated", applyReadUpdates);
 }
 
 function removePending(id) {

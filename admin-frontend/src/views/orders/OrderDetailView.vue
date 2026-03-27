@@ -206,6 +206,62 @@
                             ></video>
                           </template>
                         </div>
+
+                        <div class="mt-3">
+                          <div v-if="review.evaluate?.reply && openReplyId !== review.evaluate?.id" class="review-reply-box">
+                            <div class="d-flex align-items-center justify-content-between gap-2">
+                              <div class="small fw-semibold">Phản hồi của admin</div>
+                              <button
+                                class="btn btn-sm btn-outline-secondary"
+                                type="button"
+                                @click="openReplyForm(review)"
+                              >
+                                Sửa phản hồi
+                              </button>
+                            </div>
+                            <div class="small opacity-75 mt-1">{{ review.evaluate.reply }}</div>
+                          </div>
+
+                          <button
+                            v-else-if="openReplyId !== review.evaluate?.id"
+                            class="btn btn-sm btn-outline-secondary"
+                            type="button"
+                            @click="openReplyForm(review)"
+                          >
+                            Phản hồi
+                          </button>
+
+                          <div
+                            v-else
+                            class="review-reply-box"
+                          >
+                            <label class="form-label small fw-semibold mb-1">Phản hồi của admin</label>
+                            <textarea
+                              v-model="replyDrafts[review.evaluate.id]"
+                              class="form-control bg-transparent"
+                              rows="3"
+                              placeholder="Nhập nội dung phản hồi..."
+                            ></textarea>
+                            <div class="d-flex gap-2 mt-2">
+                              <button
+                                class="btn btn-sm btn-accent"
+                                type="button"
+                                :disabled="savingReply[review.evaluate.id]"
+                                @click="submitReply(review)"
+                              >
+                                {{ savingReply[review.evaluate.id] ? "Đang gửi..." : "Gửi phản hồi" }}
+                              </button>
+                              <button
+                                class="btn btn-sm btn-outline-secondary"
+                                type="button"
+                                :disabled="savingReply[review.evaluate.id]"
+                                @click="cancelReplyForm()"
+                              >
+                                Hủy
+                              </button>
+                            </div>
+                          </div>
+                        </div>
                       </template>
                     </div>
                   </div>
@@ -298,6 +354,9 @@ const loading = ref(false);
 const actionLoading = ref(false);
 const order = ref(null);
 const allocations = ref({});
+const openReplyId = ref(null);
+const replyDrafts = ref({});
+const savingReply = ref({});
 const reviewedProducts = computed(() =>
   (order.value?.reviewable_products || []).filter((item) => Boolean(item?.is_evaluated))
 );
@@ -308,6 +367,41 @@ function normalizeMediaType(typeValue) {
 
 function discountLabel(discount) {
   return `${discount?.des || "Khuyen mai"} - ${Number(discount?.percent || 0)}%`;
+}
+
+function openReplyForm(review) {
+  const evaluateId = Number(review?.evaluate?.id || 0);
+  if (!evaluateId) return;
+  openReplyId.value = evaluateId;
+  replyDrafts.value[evaluateId] = review?.evaluate?.reply || "";
+}
+
+function cancelReplyForm() {
+  openReplyId.value = null;
+}
+
+async function submitReply(review) {
+  const evaluateId = Number(review?.evaluate?.id || 0);
+  if (!evaluateId) return;
+
+  const reply = String(replyDrafts.value[evaluateId] || "").trim();
+  if (!reply) {
+    await Swal.fire("Thiếu nội dung", "Vui lòng nhập nội dung phản hồi.", "warning");
+    return;
+  }
+
+  savingReply.value[evaluateId] = true;
+  try {
+    const res = await OrderService.replyEvaluate(evaluateId, reply);
+    review.evaluate.reply = reply;
+    openReplyId.value = null;
+    await Swal.fire("Thành công", res?.message || "Đã gửi phản hồi.", "success");
+  } catch (e) {
+    const msg = e?.response?.data?.message || "Không thể gửi phản hồi.";
+    await Swal.fire("Lỗi", msg, "error");
+  } finally {
+    savingReply.value[evaluateId] = false;
+  }
 }
 
 function buildInvoiceHtml() {
@@ -722,6 +816,13 @@ onMounted(fetchOrder);
   border-radius: 10px;
   border: 1px solid var(--border-color);
   background: #000;
+}
+
+.review-reply-box {
+  border: 1px dashed var(--border-color);
+  border-radius: 10px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.02);
 }
 
 .discount-list {
