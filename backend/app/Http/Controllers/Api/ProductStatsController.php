@@ -34,10 +34,24 @@ class ProductStatsController extends Controller
         $perPage = $perPage > 0 ? min($perPage, 100) : 10;
         $page    = (int) $request->query('page', 1);
 
-        $query = $this->baseQuery($q);
+        $query = $this->baseQuery($request, $q);
+
+        $sortBy  = $request->query('sort_by', 'sold_qty');
+        $sortDir = strtolower($request->query('sort_dir', 'desc')) === 'asc' ? 'asc' : 'desc';
+        $allowedSort = [
+            'sold_qty',
+            'purchased_qty',
+            'stock_qty',
+            'avg_selling_price',
+            'avg_purchase_price',
+            'name',
+        ];
+        if (! in_array($sortBy, $allowedSort, true)) {
+            $sortBy = 'sold_qty';
+        }
 
         $paginator = $query
-            ->orderBy('products.name')
+            ->orderBy($sortBy === 'name' ? 'products.name' : $sortBy, $sortDir)
             ->paginate($perPage, ['*'], 'page', $page);
 
         return response()->json([
@@ -60,9 +74,22 @@ class ProductStatsController extends Controller
         $this->ensureAdmin($request);
 
         $q = trim((string) $request->query('q', ''));
+        $sortBy  = $request->query('sort_by', 'sold_qty');
+        $sortDir = strtolower($request->query('sort_dir', 'desc')) === 'asc' ? 'asc' : 'desc';
+        $allowedSort = [
+            'sold_qty',
+            'purchased_qty',
+            'stock_qty',
+            'avg_selling_price',
+            'avg_purchase_price',
+            'name',
+        ];
+        if (! in_array($sortBy, $allowedSort, true)) {
+            $sortBy = 'sold_qty';
+        }
 
-        $rows = $this->baseQuery($q)
-            ->orderBy('products.name')
+        $rows = $this->baseQuery($request, $q)
+            ->orderBy($sortBy === 'name' ? 'products.name' : $sortBy, $sortDir)
             ->get();
 
         $filename = 'product-stats-' . now()->format('Ymd_His') . '.xlsx';
@@ -109,8 +136,17 @@ class ProductStatsController extends Controller
         return response()->stream($callback, 200, $headers);
     }
 
-    private function baseQuery(string $q)
+    private function baseQuery(Request $request, string $q)
     {
+        $categoryId    = $request->query('category_id');
+        $soldFrom      = $request->query('sold_from');
+        $soldTo        = $request->query('sold_to');
+        $purchaseFrom  = $request->query('purchase_from');
+        $purchaseTo    = $request->query('purchase_to');
+        $stockGte      = $request->query('stock_gte');
+        $stockLte      = $request->query('stock_lte');
+        $soldGte       = $request->query('sold_gte');
+
         $purchaseSub = ReceiptDetail::query()
             ->selectRaw(
                 'CASE WHEN SUM(receipt_details.quantity)=0 THEN 0 ELSE SUM(receipt_details.quantity * receipt_details.purchase_price) / SUM(receipt_details.quantity) END'
@@ -118,6 +154,12 @@ class ProductStatsController extends Controller
             ->join('receipts', 'receipts.id', '=', 'receipt_details.receipt_id')
             ->where('receipts.status', 'completed')
             ->whereColumn('receipt_details.product_id', 'products.id');
+        if ($purchaseFrom) {
+            $purchaseSub->whereDate('receipts.created_at', '>=', $purchaseFrom);
+        }
+        if ($purchaseTo) {
+            $purchaseSub->whereDate('receipts.created_at', '<=', $purchaseTo);
+        }
 
         $sellingSub = OrderDetail::query()
             ->selectRaw(
@@ -126,18 +168,36 @@ class ProductStatsController extends Controller
             ->join('orders', 'orders.id', '=', 'order_details.order_id')
             ->where('orders.status', 'completed')
             ->whereColumn('order_details.product_id', 'products.id');
+        if ($soldFrom) {
+            $sellingSub->whereDate('orders.created_at', '>=', $soldFrom);
+        }
+        if ($soldTo) {
+            $sellingSub->whereDate('orders.created_at', '<=', $soldTo);
+        }
 
         $purchasedQtySub = ReceiptDetail::query()
             ->selectRaw('COALESCE(SUM(receipt_details.quantity),0)')
             ->join('receipts', 'receipts.id', '=', 'receipt_details.receipt_id')
             ->where('receipts.status', 'completed')
             ->whereColumn('receipt_details.product_id', 'products.id');
+        if ($purchaseFrom) {
+            $purchasedQtySub->whereDate('receipts.created_at', '>=', $purchaseFrom);
+        }
+        if ($purchaseTo) {
+            $purchasedQtySub->whereDate('receipts.created_at', '<=', $purchaseTo);
+        }
 
         $soldQtySub = OrderDetail::query()
             ->selectRaw('COALESCE(SUM(order_details.quantity),0)')
             ->join('orders', 'orders.id', '=', 'order_details.order_id')
             ->where('orders.status', 'completed')
             ->whereColumn('order_details.product_id', 'products.id');
+        if ($soldFrom) {
+            $soldQtySub->whereDate('orders.created_at', '>=', $soldFrom);
+        }
+        if ($soldTo) {
+            $soldQtySub->whereDate('orders.created_at', '<=', $soldTo);
+        }
 
         $stockSub = WarehouseDetail::query()
             ->selectRaw('COALESCE(SUM(quantity),0)')
@@ -169,6 +229,18 @@ class ProductStatsController extends Controller
                 $sub->where('products.name', 'like', "%{$q}%")
                     ->orWhere('products.code', 'like', "%{$q}%");
             });
+        }
+        if ($categoryId) {
+            $query->where('products.category_id', (int) $categoryId);
+        }
+        if ($soldGte !== null) {
+            $query->having('sold_qty', '>=', (int) $soldGte);
+        }
+        if ($stockGte !== null) {
+            $query->having('stock_qty', '>=', (int) $stockGte);
+        }
+        if ($stockLte !== null) {
+            $query->having('stock_qty', '<=', (int) $stockLte);
         }
 
         return $query;

@@ -654,12 +654,24 @@ class ProductController extends Controller
                     ->select('order_details.product_id', DB::raw('SUM(order_details.quantity) as reserved_quantity'))
                     ->groupBy('order_details.product_id');
 
+                $soldSub = DB::table('order_details')
+                    ->join('orders', 'orders.id', '=', 'order_details.order_id')
+                    ->where('orders.status', 'completed')
+                    ->select(
+                        'order_details.product_id',
+                        DB::raw('SUM(order_details.quantity) as sold_quantity')
+                    )
+                    ->groupBy('order_details.product_id');
+
                 $query = Product::query()
                     ->joinSub($stockSub, 'ws', function ($join) {
                         $join->on('products.id', '=', 'ws.product_id');
                     })
                     ->leftJoinSub($reservedSub, 'rs', function ($join) {
                         $join->on('products.id', '=', 'rs.product_id');
+                    })
+                    ->leftJoinSub($soldSub, 'ss', function ($join) {
+                        $join->on('products.id', '=', 'ss.product_id');
                     })
                     ->with([
                         'category',
@@ -676,17 +688,18 @@ class ProductController extends Controller
                     ])
                     ->select(
                         'products.*',
-                        DB::raw('GREATEST(COALESCE(ws.stock_quantity, 0) - COALESCE(rs.reserved_quantity, 0), 0) as stock_quantity')
+                        DB::raw('GREATEST(COALESCE(ws.stock_quantity, 0) - COALESCE(rs.reserved_quantity, 0), 0) as stock_quantity'),
+                        DB::raw('COALESCE(ss.sold_quantity, 0) as sold')
                     )
                     ->when($q !== '', fn($qq) => $qq->where('products.name', 'like', "%{$q}%"))
                     ->when($categoryId, fn($qq) => $qq->where('products.category_id', $categoryId))
+                    ->orderByDesc('sold')
                     ->orderByDesc('ws.stock_quantity')
                     ->orderByDesc('products.id');
 
                 $result = $query->paginate($perPage);
                 $this->appendColorStocksToProducts(collect($result->items()), $status);
                 $this->appendReviewSummaryToProducts(collect($result->items()));
-                $this->appendSoldOrdersCountToProducts(collect($result->items()));
 
                 return $result;
             });
@@ -836,9 +849,11 @@ class ProductController extends Controller
                 $this->appendAvailabilityToProducts(collect([$product]));
                 $this->appendAvailabilityToProducts($relatedProducts);
 
+                $stockSummary = $this->buildStockSummary((int) $product->id);
                 $reviewPayload = $this->getProductReviewsPayload((int) $product->id, 4);
                 $product->setAttribute('rating', $reviewPayload['summary']['avg_rating']);
                 $product->setAttribute('reviews_count', $reviewPayload['summary']['total_reviews']);
+                $product->setAttribute('sold', (int) ($stockSummary['sold_quantity'] ?? 0));
 
                 return [
                     'product'          => $product,
@@ -940,6 +955,7 @@ class ProductController extends Controller
                 'id' => (int) ($evaluate->id ?? 0),
                 'rating' => (float) ($evaluate->rating ?? 0),
                 'content' => $evaluate->content === null ? null : (string) $evaluate->content,
+                'reply' => $evaluate->reply === null ? null : (string) $evaluate->reply,
                 'created_at' => optional($evaluate->created_at)?->toISOString(),
                 'reviewer' => [
                     'name' => (string) ($profile?->name ?: $user?->username ?: 'Khach hang'),
