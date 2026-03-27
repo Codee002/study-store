@@ -112,6 +112,64 @@
               </div>
             </div>
 
+            <div v-if="product" class="mt-3">
+              <div class="fw-semibold">Tham khảo giá nhập</div>
+              <div class="small opacity-75">
+                Dựa trên các phiếu nhập đã hoàn tất, có thể giúp ước lượng giá bán hợp lý.
+              </div>
+
+              <div v-if="purchaseStats.loading" class="small mt-2 opacity-75">
+                <i class="fa-solid fa-spinner fa-spin me-1"></i> Dang lay thong ke gia nhap...
+              </div>
+
+              <div
+                v-else-if="
+                  purchaseStats.data?.total_entries > 0 &&
+                  purchaseStats.data?.avg_purchase_price >= 0
+                "
+                class="row g-3 mt-1"
+              >
+                <div class="col-12 col-md-6">
+                  <div class="stat-box">
+                    <div class="small text-uppercase opacity-75">Giá nhập TB</div>
+                    <div class="fs-4 fw-semibold">
+                      {{ formatMoney(purchaseStats.data.avg_purchase_price) }}
+                    </div>
+                    <div class="small opacity-75">
+                      {{ purchaseStats.data.total_entries }} phiếu nhập hoàn tất
+                    </div>
+                  </div>
+                </div>
+
+                <div class="col-12 col-md-6">
+                  <div class="stat-box">
+                    <div class="small text-uppercase opacity-75">Lần gần nhất</div>
+                    <div class="fs-4 fw-semibold">
+                      {{
+                        purchaseStats.data.last_purchase_price
+                          ? formatMoney(purchaseStats.data.last_purchase_price)
+                          : "-"
+                      }}
+                    </div>
+                    <div class="small opacity-75">
+                      Tổng SL đã nhập: {{ purchaseStats.data.total_quantity ?? 0 }}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div
+                v-else-if="purchaseStats.data?.total_entries === 0"
+                class="small mt-2 text-warning"
+              >
+                Chưa có phiếu nhập hoàn tất cho sản phẩm này.
+              </div>
+
+              <div v-else-if="purchaseStats.error" class="small mt-2 text-danger">
+                {{ purchaseStats.error }}
+              </div>
+            </div>
+
             <div v-if="stockSummary" class="mt-3">
               <div class="fw-semibold">Tồn kho</div>
               <div class="small opacity-75">Theo từng kho, màu và số đang đặt</div>
@@ -252,6 +310,7 @@ const selectedExportTierId = ref("");
 const product = ref(null);
 const rows = ref([]);
 const stockSummary = ref(null);
+const purchaseStats = ref({ loading: false, data: null, error: null });
 
 const productThumb = computed(() => product.value?.images?.[0]?.url || "");
 
@@ -323,16 +382,34 @@ async function onPickProduct() {
     product.value = null;
     rows.value = [];
     stockSummary.value = null;
+    purchaseStats.value = { loading: false, data: null, error: null };
     return;
   }
 
   loadingPrices.value = true;
+  purchaseStats.value = { loading: true, data: null, error: null };
   try {
-    const res = await ProductService.get(selectedProductId.value);
+    const [res, purchaseRes] = await Promise.all([
+      ProductService.get(selectedProductId.value),
+      ProductService.getPurchaseStats(selectedProductId.value),
+    ]);
     product.value = res?.product ?? res;
     rows.value = normalizePricesToRows(res?.product?.prices || []);
     stockSummary.value = res?.stock_summary || res?.product?.stock_summary || null;
+    purchaseStats.value = {
+      loading: false,
+      data: purchaseRes?.data || null,
+      error: null,
+    };
   } catch (e) {
+    purchaseStats.value = {
+      loading: false,
+      data: null,
+      error:
+        e?.response?.data?.message ||
+        e?.response?.data?.error ||
+        "Khong the tai thong ke gia nhap.",
+    };
     const msg =
       e?.response?.data?.message ||
       e?.response?.data?.error ||

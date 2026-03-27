@@ -60,13 +60,71 @@
               </div>
             </div>
 
+            <div class="mb-3">
+              <div class="fw-semibold">Tham khảo giá nhập</div>
+              <div class="small opacity-75">
+                Dựa trên các phiếu nhập đã hoàn tất, có thể giúp ước lượng giá bán hợp lý.
+              </div>
+
+              <div v-if="purchaseStats.loading" class="small mt-2 opacity-75">
+                <i class="fa-solid fa-spinner fa-spin me-1"></i> Đang tải thống kê giá nhập...
+              </div>
+
+              <div
+                v-else-if="
+                  purchaseStats.data?.total_entries > 0 &&
+                  purchaseStats.data?.avg_purchase_price >= 0
+                "
+                class="row g-3 mt-1"
+              >
+                <div class="col-12 col-md-6">
+                  <div class="stat-box">
+                    <div class="small text-uppercase opacity-75">Giá nhập TB</div>
+                    <div class="fs-4 fw-semibold">
+                      {{ formatMoney(purchaseStats.data.avg_purchase_price) }}
+                    </div>
+                    <div class="small opacity-75">
+                      {{ purchaseStats.data.total_entries }} phiếu nhập hoàn tất
+                    </div>
+                  </div>
+                </div>
+
+                <div class="col-12 col-md-6">
+                  <div class="stat-box">
+                    <div class="small text-uppercase opacity-75">Lần gần nhất</div>
+                    <div class="fs-4 fw-semibold">
+                      {{
+                        purchaseStats.data.last_purchase_price
+                          ? formatMoney(purchaseStats.data.last_purchase_price)
+                          : "-"
+                      }}
+                    </div>
+                    <div class="small opacity-75">
+                      Tổng SL đã nhập: {{ purchaseStats.data.total_quantity ?? 0 }}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div
+                v-else-if="purchaseStats.data?.total_entries === 0"
+                class="small mt-2 text-warning"
+              >
+                Chưa có phiếu nhập hoàn tất cho sản phẩm này.
+              </div>
+
+              <div v-else-if="purchaseStats.error" class="small mt-2 text-danger">
+                {{ purchaseStats.error }}
+              </div>
+            </div>
+
             <!-- Form -->
             <Form
               :key="formKey"
               :initial-values="initialValues"
               :validation-schema="schema"
               @submit="onSubmit"
-              v-slot="{ isSubmitting, values, setFieldValue }"
+              v-slot="{ isSubmitting, values, setFieldValue, errors }"
             >
               <div
                 class="d-flex align-items-center justify-content-between gap-2"
@@ -117,8 +175,8 @@
                         type="button"
                         class="btn btn-outline-danger btn-sm"
                         title="Xóa dòng"
-                        @click="remove(rowIdx)"
-                        :disabled="isSubmitting || fields.length <= 1"
+                        @click="removeRow(values, remove, rowIdx)"
+                        :disabled="isSubmitting || !canRemoveRow(values, rowIdx)"
                       >
                         <i class="fa-solid fa-trash"></i>
                       </button>
@@ -158,6 +216,12 @@
                           class="small text-danger mt-1"
                         >
                           Số lượng tối thiểu bị trùng
+                        </div>
+                        <div
+                          v-else-if="!hasMinQtyOne(values) && rowIdx === 0"
+                          class="small text-danger mt-1"
+                        >
+                          Phai co it nhat 1 dong co min quantity = 1.
                         </div>
                       </div>
                     </div>
@@ -209,6 +273,13 @@
                   </div>
                 </div>
               </FieldArray>
+
+              <div
+                v-if="typeof errors.rows === 'string'"
+                class="invalid-feedback d-block mt-2"
+              >
+                {{ errors.rows }}
+              </div>
             </Form>
           </template>
         </div>
@@ -236,6 +307,7 @@ const formKey = ref(0);
 
 const product = ref(null);
 const tiers = ref([]);
+const purchaseStats = ref({ loading: false, data: null, error: null });
 
 const initialValues = ref({ rows: [] });
 
@@ -307,6 +379,14 @@ const schema = computed(() => {
         }
         return true;
       })
+      .test(
+        "has-minqty-one",
+        "Phải có ít nhất 1 dòng với min quantity = 1",
+        function (rows) {
+          if (!Array.isArray(rows) || !rows.length) return false;
+          return rows.some((r) => Number(r?.min_quantity) === 1);
+        }
+      )
       .of(
         yup.object({
           min_quantity: yup
@@ -365,6 +445,33 @@ function isDupMinQty(values, rowIdx) {
   return getDupMinQtySetFromValues(values).has(k);
 }
 
+function hasMinQtyOne(values) {
+  return (values?.rows || []).some((r) => Number(r?.min_quantity) === 1);
+}
+
+function canRemoveRow(values, rowIdx) {
+  const rows = values?.rows || [];
+  if (rows.length <= 1) return false;
+
+  const currentMinQty = Number(rows[rowIdx]?.min_quantity);
+  if (currentMinQty !== 1) return true;
+
+  return rows.some((r, idx) => idx !== rowIdx && Number(r?.min_quantity) === 1);
+}
+
+async function removeRow(values, remove, rowIdx) {
+  if (canRemoveRow(values, rowIdx)) {
+    remove(rowIdx);
+    return;
+  }
+
+  await Swal.fire(
+    "Lỗi",
+    "Không thể xóa dòng min quantity = 1 duy nhất trong bảng giá.",
+    "warning"
+  );
+}
+
 function addRow(values, setFieldValue) {
   const rows = values?.rows || [];
   const maxMin = rows.reduce(
@@ -382,6 +489,15 @@ async function onSubmit(values, { setErrors }) {
       await Swal.fire(
         "Lỗi",
         "Min quantity bị trùng, vui lòng kiểm tra lại.",
+        "error"
+      );
+      return;
+    }
+
+    if (!hasMinQtyOne(values)) {
+      await Swal.fire(
+        "Lỗi",
+        "Bảng giá bắt buộc phải có ít nhất 1 dòng với min quantity = 1.",
         "error"
       );
       return;
@@ -425,12 +541,21 @@ async function onSubmit(values, { setErrors }) {
 
 async function refetch() {
   loading.value = true;
+  purchaseStats.value = { loading: true, data: null, error: null };
   try {
     const tierRes = await TierService.getAll({ per_page: 200 });
     tiers.value = tierRes?.data?.items ?? tierRes?.data ?? tierRes ?? [];
 
-    const prRes = await ProductService.get(productId);
+    const [prRes, purchaseRes] = await Promise.all([
+      ProductService.get(productId),
+      ProductService.getPurchaseStats(productId),
+    ]);
     product.value = prRes?.product ?? prRes;
+    purchaseStats.value = {
+      loading: false,
+      data: purchaseRes?.data || null,
+      error: null,
+    };
 
     const prices = prRes?.product?.prices || [];
 
@@ -441,6 +566,14 @@ async function refetch() {
     formKey.value += 1;
   } catch (e) {
     console.log(e);
+    purchaseStats.value = {
+      loading: false,
+      data: null,
+      error:
+        e?.response?.data?.message ||
+        e?.response?.data?.error ||
+        "Khong the tai thong ke gia nhap.",
+    };
     const msg =
       e?.response?.data?.message ||
       e?.response?.data?.error ||
@@ -509,6 +642,13 @@ onMounted(refetch);
   border: 1px solid var(--border-color);
   border-radius: 1rem;
   padding: 1rem;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.stat-box {
+  border: 1px solid var(--border-color);
+  border-radius: 0.8rem;
+  padding: 0.9rem 1rem;
   background: rgba(255, 255, 255, 0.02);
 }
 </style>
