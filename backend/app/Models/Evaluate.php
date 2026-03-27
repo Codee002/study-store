@@ -14,6 +14,7 @@ class Evaluate extends Model
         'order_id',
         'rating',
         'content',
+        'reply',
     ];
 
     public function order()

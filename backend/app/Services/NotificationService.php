@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Events\NotificationPushed;
+use App\Models\Evaluate;
 use App\Models\Notification;
 use App\Models\Order;
 use App\Models\User;
@@ -71,6 +72,65 @@ class NotificationService
     /**
      * Sinh nội dung thông báo khi trạng thái đổi.
      */
+    public function notifyEvaluateSubmitted(Evaluate $evaluate): void
+    {
+        $evaluate->loadMissing([
+            'order.user.profile',
+            'product:id,name',
+        ]);
+
+        $orderId = (int) ($evaluate->order_id ?? 0);
+        if ($orderId <= 0) {
+            return;
+        }
+
+        $customerName = trim((string) ($evaluate->order?->user?->profile?->name
+            ?: $evaluate->order?->user?->username
+            ?: 'Khách hàng'));
+        $productName = trim((string) ($evaluate->product?->name ?: 'sản phẩm'));
+        $rating = max(1, min(5, (int) round((float) ($evaluate->rating ?? 0))));
+
+        $payload = [
+            'type'    => 'evaluate',
+            'content' => "{$customerName} đã đánh giá {$rating} sao cho {$productName} trong đơn hàng #{$orderId}.",
+            'url_id'  => $orderId,
+            'status'  => 'unread',
+        ];
+
+        $adminIds = User::query()
+            ->where('role', 'admin')
+            ->pluck('id')
+            ->all();
+
+        foreach ($adminIds as $adminId) {
+            $this->createAndBroadcast(array_merge($payload, ['user_id' => (int) $adminId]));
+        }
+    }
+
+    public function notifyEvaluateReply(Evaluate $evaluate): void
+    {
+        $evaluate->loadMissing([
+            'order.user',
+            'product:id,name',
+        ]);
+
+        $orderId = (int) ($evaluate->order_id ?? 0);
+        $customerId = (int) ($evaluate->order?->user_id ?? 0);
+        if ($orderId <= 0 || $customerId <= 0) {
+            return;
+        }
+
+        $productName = trim((string) ($evaluate->product?->name ?: 'san pham'));
+
+        $this->createAndBroadcast([
+            'user_id' => $customerId,
+            'type'    => 'evaluate-reply',
+            'content' => "Shop đã phản hồi đánh giá của bạn cho {$productName} trong đơn hàng #{$orderId}.",
+            'url_id'  => $orderId,
+            'status'  => 'unread',
+        ]);
+    }
+
     public function buildOrderStatusMessage(Order $order, string $oldStatus, string $newStatus): string
     {
         $oldLabel = $this->statusLabel($oldStatus);
