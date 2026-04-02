@@ -119,7 +119,7 @@
               </div>
 
               <div v-if="purchaseStats.loading" class="small mt-2 opacity-75">
-                <i class="fa-solid fa-spinner fa-spin me-1"></i> Dang lay thong ke gia nhap...
+                <i class="fa-solid fa-spinner fa-spin me-1"></i> Đang lấy thống kê giá nhập...
               </div>
 
               <div

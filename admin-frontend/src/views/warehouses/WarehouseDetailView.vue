@@ -268,7 +268,7 @@ import WarehouseService from "@/services/warehouse.service";
 import CategoryService from "@/services/category.service";
 import { formatDateTimeVN } from "@/utils/utils";
 
-const route = useRoute();
+const route = useRoute
 const router = useRouter();
 const id = route.params.id;
 
@@ -276,7 +276,7 @@ const loading = ref(true);
 const warehouse = ref(null);
 
 const items = ref([]);
-const meta = ref({ current_page: 1, last_page: 1, per_page: 8, total: 0 });
+const meta = ref({ current_page: 1, last_page: 1, per_page: 12, total: 0 });
 const page = ref(1);
 const perPage = 8;
 

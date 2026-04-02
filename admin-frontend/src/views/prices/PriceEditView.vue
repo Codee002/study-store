@@ -221,7 +221,7 @@
                           v-else-if="!hasMinQtyOne(values) && rowIdx === 0"
                           class="small text-danger mt-1"
                         >
-                          Phai co it nhat 1 dong co min quantity = 1.
+                          Phải có ít nhất 1 dòng với số lượng tối thiểu = 1
                         </div>
                       </div>
                     </div>
