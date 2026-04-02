@@ -1,6 +1,5 @@
 <template>
   <div>
-    <AppHeader :cart-count="cartCount" :user="user" @search="onHeaderSearch" />
 
     <main class="container py-4">
       <section class="mb-3">
@@ -40,7 +39,7 @@
         </div>
       </section>
 
-      <section v-if="loading" class="text-center py-5 text-muted">Đang tải...</section>
+      <section v-if="loading" class="text-center py-5 text-muted">Đang tải sản phẩm...</section>
       <section v-else-if="error" class="text-center py-5 text-danger">{{ error }}</section>
       <section v-else>
         <div class="row g-3">
@@ -96,29 +95,22 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
-import AppHeader from "@/components/layout/AppHeader.vue";
 import AppFooter from "@/components/layout/AppFooter.vue";
 import ProductCard from "@/components/home/ProductCard.vue";
 import ProductPurchaseModal from "@/components/product/ProductPurchaseModal.vue";
 import Swal from "sweetalert2";
-import authService from "@/services/auth.service";
 import cartService from "@/services/cart.service";
 import checkoutService from "@/services/checkout.service";
 import ProductService from "@/services/product.service";
+import { useCustomerHeaderState } from "@/composables/useCustomerHeaderState";
 import { getRetailRow, getUserTierRow } from "@/utils/pricing";
 
 const PAGE_SIZE = 16;
 const router = useRouter();
+const headerStore = useCustomerHeaderState();
+const user = computed(() => headerStore.state.user || headerStore.defaultUser);
 
-const cartCount = ref(0);
-const user = ref({
-  name: "Guest",
-  avatar: "/default-user-avatar.svg",
-  tier_id: null,
-  profile: null,
-});
-
-const loading = ref(false);
+const loading = ref(true);
 const error = ref("");
 const allProducts = ref([]);
 const showPurchaseModal = ref(false);
@@ -227,7 +219,9 @@ async function handleConfirmPurchase(payload) {
     }
 
     const res = await cartService.addItem(payload);
-    cartCount.value = cartService.getCountFromItems(res?.cart?.items || []);
+    window.dispatchEvent(new CustomEvent("cart-updated", {
+      detail: { count: cartService.getCountFromItems(res?.cart?.items || []) },
+    }));
     await Swal.fire("Thành công!", res?.message || "Thêm vào giỏ hàng thành công!", "success");
   } catch (e) {
     const msg =
@@ -238,49 +232,42 @@ async function handleConfirmPurchase(payload) {
   }
 }
 
-async function fetchMe() {
-  try {
-    const meRes = await authService.me();
-    const me = meRes?.data || meRes;
-    const meUser = me?.user || {};
-
-    user.value = {
-      ...meUser,
-      name: meUser?.name || "Guest",
-      avatar: meUser?.avatar || "/default-user-avatar.svg",
-      tier_id: meUser?.tier_id ?? meUser?.profile?.tier_id ?? null,
-      profile: meUser?.profile ?? null,
-    };
-  } catch {
-    user.value = {
-      name: "Guest",
-      avatar: "/default-user-avatar.svg",
-      tier_id: null,
-      profile: null,
-    };
-  }
-}
-
 async function fetchProducts() {
   loading.value = true;
   error.value = "";
 
   try {
-    const res = await ProductService.getHomeProducts({
-      per_page: 500,
-      page: 1,
-      status: "actived",
-      q: searchKeyword.value || undefined,
-    });
+    const q = searchKeyword.value || undefined;
+    // Nếu query bắt đầu bằng @ -> gọi semantic search (API /api/products?q=@...)
+    const useSemantic = q && q.startsWith("@");
 
-    const items = res?.items || [];
-    const activeItems = items.filter((p) => {
-      if (p?.status != null) return String(p.status) === "active";
-      if (p?.active != null) return Number(p.active) === 1;
-      return true;
-    });
+    if (useSemantic) {
+      const res = await ProductService.getAll({
+        q,
+        per_page: PAGE_SIZE * 5,
+        page: 1,
+      });
+      const payload = res?.data ?? res;
+      const items = payload?.items ?? payload?.data ?? payload ?? [];
+      allProducts.value = (items || []).map((p) => mapToProductCard(p, user.value));
+    } else {
+      const res = await ProductService.getHomeProducts({
+        per_page: 500,
+        page: 1,
+        status: "actived",
+        q,
+      });
 
-    allProducts.value = activeItems.map((p) => mapToProductCard(p, user.value));
+      const items = res?.items || [];
+      const activeItems = items.filter((p) => {
+        if (p?.status != null) return String(p.status) === "active";
+        if (p?.active != null) return Number(p.active) === 1;
+        return true;
+      });
+
+      allProducts.value = activeItems.map((p) => mapToProductCard(p, user.value));
+    }
+
     if (
       selectedCategory.value !== "ALL" &&
       !allProducts.value.some((p) => p.category === selectedCategory.value)
@@ -288,7 +275,8 @@ async function fetchProducts() {
       selectedCategory.value = "ALL";
     }
     if (currentPage.value > totalPages.value) currentPage.value = totalPages.value;
-  } catch {
+  } catch (e) {
+    console.log(e)
     error.value = "Không thể tải danh sách sản phẩm.";
     allProducts.value = [];
   } finally {
@@ -308,12 +296,7 @@ function onHeaderSearch(value) {
 }
 
 onMounted(async () => {
-  await fetchMe();
-  try {
-    cartCount.value = await cartService.getCount();
-  } catch {
-    cartCount.value = 0;
-  }
+  await headerStore.initHeaderState();
   await fetchProducts();
 });
 </script>

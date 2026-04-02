@@ -1,6 +1,5 @@
 <template>
   <div>
-    <AppHeader :cart-count="cartCount" :user="user" />
 
     <main class="container py-4">
       <section class="price-shell">
@@ -77,6 +76,16 @@
             <table class="table align-middle table-sm">
               <thead>
                 <tr>
+                  <th style="width: 48px" class="text-center">
+                    <input
+                      ref="selectAllRef"
+                      type="checkbox"
+                      class="form-check-input"
+                      :disabled="!selectableRowNos.length"
+                      :checked="isAllSelected"
+                      @change="toggleSelectAll"
+                    />
+                  </th>
                   <th style="width: 60px">#</th>
                   <th>Sản phẩm</th>
                   <th>Màu</th>
@@ -90,6 +99,15 @@
               </thead>
               <tbody>
                 <tr v-for="row in purchaseRows" :key="`upload-row-${row.row_no}`">
+                  <td class="text-center">
+                    <input
+                      type="checkbox"
+                      class="form-check-input"
+                      :disabled="!row.is_valid"
+                      :checked="selectedRowNos.includes(row.row_no)"
+                      @change="onToggleRow(row, $event)"
+                    />
+                  </td>
                   <td>{{ row.row_no }}</td>
                   <td>{{ row.product_name || row.product_id || "-" }}</td>
                   <td>{{ row.color_option || "-" }}</td>
@@ -101,37 +119,34 @@
                   <td>
                     <div class="d-flex flex-column gap-1">
                       <span class="badge" :class="row.is_valid ? 'bg-success-subtle text-success-emphasis' : 'bg-danger-subtle text-danger-emphasis'">
-                        {{ row.is_valid ? "Hợp lệ" : "Lỗi dữ liệu" }}
+                        {{ row.is_valid ? "OK" : "Lỗi" }}
                       </span>
                       <div v-if="row.errors?.length" class="small text-danger">
-                        {{ row.errors.join("; ") }}
+                        {{ shortList(row.errors) }}
                       </div>
                       <div v-if="row.warnings?.length" class="small text-warning-emphasis">
-                        {{ row.warnings.join("; ") }}
+                        {{ shortList(row.warnings) }}
                       </div>
                     </div>
                   </td>
                 </tr>
-                <tr>
-                  <th colspan="7" class="text-end">Tổng tạm tính</th>
-                  <th class="text-end text-danger">{{ formatVnd(uploadGrandTotal) }}</th>
-                  <th></th>
-                </tr>
-                <tr>
-                  <th colspan="9" class="text-end">
-                    <button
-                      class="btn btn-success"
-                      type="button"
-                      :disabled="!hasValidRows || addingToCart"
-                      @click="addValidRowsToCart"
-                    >
-                      <i v-if="addingToCart" class="fa-solid fa-spinner fa-spin me-1"></i>
-                      Thêm giỏ hàng
-                    </button>
-                  </th>
-                </tr>
               </tbody>
             </table>
+          </div>
+          <div v-if="purchaseRows.length" class="d-flex flex-wrap justify-content-end align-items-center gap-2 mt-3">
+            <div class="fw-semibold">
+              Tổng tạm tính (dòng được chọn):
+              <span class="text-danger">{{ formatVnd(uploadGrandTotal) }}</span>
+            </div>
+            <button
+              class="btn btn-success"
+              type="button"
+              :disabled="!hasSelectedValidRows || addingToCart"
+              @click="addValidRowsToCart"
+            >
+              <i v-if="addingToCart" class="fa-solid fa-spinner fa-spin me-1"></i>
+              Thêm giỏ hàng ({{ selectedRowNos.length }})
+            </button>
           </div>
           <div v-else class="small text-muted">Chưa có dữ liệu file.</div>
         </article>
@@ -202,19 +217,18 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import Swal from "sweetalert2";
-import AppHeader from "@/components/layout/AppHeader.vue";
 import AppFooter from "@/components/layout/AppFooter.vue";
-import authService from "@/services/auth.service";
 import cartService from "@/services/cart.service";
 import priceQuotationService from "@/services/price-quotation.service";
 import tierService from "@/services/tier.service";
 import ProductService from "@/services/product.service";
+import { useCustomerHeaderState } from "@/composables/useCustomerHeaderState";
 import * as XLSX from "xlsx";
 
-const cartCount = ref(0);
-const user = ref({ name: "Guest", avatar: "/default-user-avatar.svg", tier_id: null, profile: null });
+const headerStore = useCustomerHeaderState();
+const user = computed(() => headerStore.state.user || headerStore.defaultUser);
 
 const loading = ref(false);
 const downloading = ref(false);
@@ -232,15 +246,23 @@ const purchaseRows = ref([]);
 const validationSummary = ref(null);
 const downloadError = ref("");
 const addingToCart = ref(false);
+const selectedRowNos = ref([]);
+const selectAllRef = ref(null);
 
 const productThumb = computed(() => product.value?.images?.[0]?.url || "");
 const uploadGrandTotal = computed(() =>
   (purchaseRows.value || [])
-    .filter((row) => row?.is_valid)
+    .filter((row) => row?.is_valid && selectedRowNos.value.includes(row.row_no))
     .reduce((sum, row) => sum + Number(row.line_total || 0), 0),
 );
-const hasValidRows = computed(() => (purchaseRows.value || []).length > 0 && (purchaseRows.value || []).every((r) => r?.is_valid));
-// const hasValidRows = computed(() => (purchaseRows.value || []).some((r) => r?.is_valid));
+const hasValidRows = computed(() => (purchaseRows.value || []).some((r) => r?.is_valid));
+const selectableRowNos = computed(() => (purchaseRows.value || []).filter((r) => r?.is_valid).map((r) => r.row_no));
+const hasSelectedValidRows = computed(() =>
+  (purchaseRows.value || []).some((r) => r?.is_valid && selectedRowNos.value.includes(r.row_no)),
+);
+const isAllSelected = computed(
+  () => selectableRowNos.value.length > 0 && selectedRowNos.value.length === selectableRowNos.value.length,
+);
 
 const filteredProducts = computed(() => {
   const kw = keyword.value.toLowerCase().trim();
@@ -256,6 +278,12 @@ const QTY_HEADERS = ["quantity", "qty", "so_luong", "min_quantity"];
 
 function formatVnd(n) {
   return new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(Number(n || 0));
+}
+
+function shortList(list = [], maxChars = 60) {
+  const text = (list || []).join("; ");
+  if (text.length <= maxChars) return text;
+  return text.slice(0, maxChars).trimEnd() + "…";
 }
 
 function normalizePricesToRows(prices = []) {
@@ -294,30 +322,6 @@ async function extractBlobErrorMessage(blob) {
     return parsed?.message || parsed?.error || "";
   } catch {
     return "";
-  }
-}
-
-async function fetchMe() {
-  try {
-    const meRes = await authService.me();
-    const me = meRes?.data ?? meRes;
-    const meUser = me?.user ?? me ?? {};
-
-    user.value = {
-      ...meUser,
-      name: meUser?.name || "Guest",
-      avatar: meUser?.avatar || "/default-user-avatar.svg",
-      tier_id: meUser?.tier_id ?? meUser?.profile?.tier ?? null,
-      profile: meUser?.profile ?? null,
-    };
-  } catch {}
-}
-
-async function loadCartCount() {
-  try {
-    cartCount.value = await cartService.getCount();
-  } catch {
-    cartCount.value = 0;
   }
 }
 
@@ -544,6 +548,7 @@ async function validatePurchaseFileRows() {
 
     purchaseRows.value = res?.data?.rows || [];
     validationSummary.value = res?.data?.summary || null;
+    selectedRowNos.value = [...selectableRowNos.value];
 
     const invalidRows = Number(validationSummary.value?.invalid_rows || 0);
     await Swal.fire(
@@ -564,13 +569,16 @@ async function validatePurchaseFileRows() {
 function clearPurchaseRows() {
   purchaseRows.value = [];
   validationSummary.value = null;
+  selectedRowNos.value = [];
   if (purchaseFileRef.value) purchaseFileRef.value.value = "";
 }
 
 async function addValidRowsToCart() {
-  const rows = (purchaseRows.value || []).filter((r) => r?.is_valid);
+  const rows = (purchaseRows.value || []).filter(
+    (r) => r?.is_valid && selectedRowNos.value.includes(r.row_no),
+  );
   if (!rows.length) {
-    await Swal.fire("Chưa có dòng hợp lệ", "Hãy kiểm tra lại file trước khi đặt hàng.", "warning");
+    await Swal.fire("Chưa chọn dòng hợp lệ", "Hãy kiểm tra lại file trước khi đặt hàng.", "warning");
     return;
   }
 
@@ -578,6 +586,7 @@ async function addValidRowsToCart() {
   let success = 0;
   let failed = 0;
   let failMsg = "";
+  const errorDetails = [];
   try {
     for (const row of rows) {
       const pid = Number(row.matched_product_id || row.product_id || 0);
@@ -588,29 +597,75 @@ async function addValidRowsToCart() {
       const qty = Number(row.quantity || row.min_quantity || 0) || 1;
       if (!pid) {
         failed++;
+        errorDetails.push(`Dòng ${row.row_no}: thiếu product_id`);
         continue;
       }
       try {
         await cartService.addItem({ product_id: pid, color_id: colorId, quantity: qty });
         success++;
+        window.dispatchEvent(new Event("cart-updated"));
       } catch (e) {
         failed++;
-        if (!failMsg && e?.response?.data?.message) failMsg = e.response.data.message;
+        const msg = e?.response?.data?.message || "Không đủ tồn kho";
+        if (!failMsg && msg) failMsg = msg;
+        errorDetails.push(
+          `Dòng ${row.row_no}: ${row.product_name || row.product_id || "N/A"} - ${msg}`,
+        );
       }
     }
-    await loadCartCount();
-    await Swal.fire(
-      "Đặt hàng",
-      `Thêm vào giỏ: ${success} dòng thành công${failed ? `, ${failed} dòng lỗi${failMsg ? `: ${failMsg}` : ""}` : ""}`,
-      failed ? "warning" : "success",
-    );
+    const baseMsg = `Thêm vào giỏ: ${success} dòng thành công${failed ? `, ${failed} dòng lỗi` : ""}`;
+    const detailHtml = errorDetails.length
+      ? `<div class="text-start mt-2 small">${errorDetails.map((d) => `- ${d}`).join("<br/>")}</div>`
+      : "";
+    await Swal.fire({
+      title: "Đặt hàng",
+      html: `${baseMsg}${detailHtml}`,
+      icon: failed ? "warning" : "success",
+    });
   } finally {
     addingToCart.value = false;
   }
 }
 
+function onToggleRow(row, event) {
+  if (!row?.is_valid) return;
+  const checked = event?.target?.checked;
+  if (checked) {
+    if (!selectedRowNos.value.includes(row.row_no)) {
+      selectedRowNos.value = [...selectedRowNos.value, row.row_no];
+    }
+  } else {
+    selectedRowNos.value = selectedRowNos.value.filter((n) => n !== row.row_no);
+  }
+}
+
+function toggleSelectAll(event) {
+  const checked = event?.target?.checked;
+  selectedRowNos.value = checked ? [...selectableRowNos.value] : [];
+}
+
+watch(
+  selectableRowNos,
+  (nextSelectable) => {
+    // Gỡ bỏ lựa chọn không còn hợp lệ, tránh tự gây vòng lặp
+    const filtered = selectedRowNos.value.filter((n) => nextSelectable.includes(n));
+    const changed =
+      filtered.length !== selectedRowNos.value.length ||
+      filtered.some((n, idx) => n !== selectedRowNos.value[idx]);
+    if (changed) selectedRowNos.value = filtered;
+
+    if (selectAllRef.value) {
+      selectAllRef.value.indeterminate =
+        filtered.length > 0 && filtered.length < nextSelectable.length;
+      selectAllRef.value.checked =
+        nextSelectable.length > 0 && filtered.length === nextSelectable.length;
+    }
+  },
+  { immediate: true },
+);
+
 onMounted(async () => {
-  await Promise.all([fetchMe(), loadCartCount()]);
+  await headerStore.initHeaderState();
   await loadLookupData();
 });
 </script>
@@ -694,3 +749,4 @@ onMounted(async () => {
   font-weight: 800;
 }
 </style>
+

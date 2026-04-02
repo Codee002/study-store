@@ -163,13 +163,14 @@ import { useRouter } from "vue-router";
 import Swal from "sweetalert2";
 import AppFooter from "@/components/layout/AppFooter.vue";
 import ProductPurchaseModal from "@/components/product/ProductPurchaseModal.vue";
-import authService from "@/services/auth.service";
 import cartService from "@/services/cart.service";
 import productService from "@/services/product.service";
+import { useCustomerHeaderState } from "@/composables/useCustomerHeaderState";
 import { getAppliedPriceRow } from "@/utils/pricing";
 
 const cartCount = ref(0);
 const router = useRouter();
+const headerStore = useCustomerHeaderState();
 const loading = ref(true);
 const cartId = ref(0);
 const rawItems = ref([]);
@@ -177,12 +178,7 @@ const selectedKeys = ref([]);
 const showEditModal = ref(false);
 const editingItem = ref(null);
 const editProduct = ref(null);
-const user = ref({
-  name: "Guest",
-  avatar: "/default-user-avatar.svg",
-  tier_id: null,
-  profile: null,
-});
+const user = computed(() => headerStore.state.user || headerStore.defaultUser);
 
 const items = computed(() =>
   (rawItems.value || []).map((it) => {
@@ -267,7 +263,9 @@ async function loadCart({ silent = true } = {}) {
     cartId.value = Number(cart?.id || 0);
     rawItems.value = cart?.items || [];
     cartCount.value = cartService.getCountFromItems(rawItems.value);
-    window.dispatchEvent(new Event("cart-updated"));
+    window.dispatchEvent(new CustomEvent("cart-updated", {
+      detail: { count: cartService.getCountFromItems(rawItems.value) },
+    }));
   } catch (e) {
     rawItems.value = [];
     cartCount.value = 0;
@@ -361,7 +359,6 @@ async function handleConfirmEditItem(payload) {
     }
 
     await loadCart();
-    window.dispatchEvent(new Event("cart-updated"));
     await Swal.fire("Thành công!", "Đã cập nhật sản phẩm trong giỏ hàng.", "success");
   } catch (e) {
     const msg = e?.response?.data?.message || e?.response?.data?.error || "Cập nhật giỏ hàng thất bại.";
@@ -400,34 +397,13 @@ async function clearCart() {
     rawItems.value = [];
     selectedKeys.value = [];
     cartCount.value = 0;
-    window.dispatchEvent(new Event("cart-updated"));
+    window.dispatchEvent(new CustomEvent("cart-updated", {
+      detail: { count: 0 },
+    }));
     await Swal.fire("Đã xóa", "Giỏ hàng đã được xóa hết.", "success");
   } catch (e) {
     const msg = e?.response?.data?.message || e?.response?.data?.error || "Xóa giỏ hàng thất bại.";
     await Swal.fire("Lỗi", msg, "error");
-  }
-}
-
-async function fetchMe() {
-  try {
-    const meRes = await authService.me();
-    const me = meRes?.data ?? meRes;
-    const meUser = me?.user ?? me ?? {};
-
-    user.value = {
-      ...meUser,
-      name: meUser?.name || "Guest",
-      avatar: meUser?.avatar || "/default-user-avatar.svg",
-      tier_id: meUser?.tier_id ?? meUser?.profile?.tier ?? null,
-      profile: meUser?.profile ?? null,
-    };
-  } catch {
-    user.value = {
-      name: "Guest",
-      avatar: "/default-user-avatar.svg",
-      tier_id: null,
-      profile: null,
-    };
   }
 }
 
@@ -446,7 +422,7 @@ function goCheckout() {
 }
 
 onMounted(async () => {
-  await fetchMe();
+  await headerStore.initHeaderState();
   await loadCart({ silent: true });
 });
 </script>

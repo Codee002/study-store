@@ -29,6 +29,10 @@ class ProductService {
   async getCustomerProductReviews(id) {
     return (await this.api.get(`/${id}/reviews`)).data;
   }
+
+  async getRecommendations(params = {}) {
+    return (await this.api.get("/recommendations", { params })).data;
+  }
 }
 
 export default new ProductService();

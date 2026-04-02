@@ -1,9 +1,8 @@
 <template>
   <div>
-    <AppHeader :cart-count="cartCount" :user="user" />
 
     <main class="container py-4">
-      <section v-if="loading" class="text-center py-5 text-muted">Đang tải...</section>
+      <section v-if="loading" class="text-center py-5 text-muted">Đang tải sản phẩm...</section>
       <section v-else-if="error" class="text-center py-5 text-danger">{{ error }}</section>
 
       <section v-else class="product-shell">
@@ -34,7 +33,10 @@
               <h1 class="product-title">{{ product.name }}</h1>
 
               <div class="d-flex align-items-center gap-2 mb-2">
-                <span class="text-warning">{{ avgRatingText }}</span>
+                <span class="text-warning d-inline-flex align-items-center gap-1">
+                  <i class="fa-solid fa-star"></i>
+                  <span>{{ avgRatingText }}</span>
+                </span>
                 <span class="text-muted">{{ reviewSummary.total_reviews }} đánh giá |</span>
                 <span class="text-muted">{{ product.sold }} đã bán</span>
               </div>
@@ -47,13 +49,14 @@
               <div class="d-flex flex-column gap-1 small mb-3">
                 <div><span class="fw-semibold">Đơn vị:</span> {{ product.unit || "-" }}</div>
                 <div><span class="fw-semibold">Còn lại:</span> {{ product.stock_quantity }}</div>
+                <div :class="productAvailabilityClass">{{ productAvailabilityText }}</div>
               </div>
 
               <div class="d-flex gap-2">
-                <button class="btn btn-main" type="button" @click="openPurchaseModal(product, 'cart')">
+                <button class="btn btn-main" type="button" :disabled="!canPurchaseProduct" @click="openPurchaseModal(product, 'cart')">
                   Thêm vào giỏ hàng
                 </button>
-                <button class="btn btn-buy" type="button" @click="openPurchaseModal(product, 'buy-now')">
+                <button class="btn btn-buy" type="button" :disabled="!canPurchaseProduct" @click="openPurchaseModal(product, 'buy-now')">
                   Đặt hàng ngay
                 </button>
               </div>
@@ -97,6 +100,10 @@
                   class="review-media-item"
                 />
               </div>
+              <div v-if="rv.reply" class="review-reply-box mt-2">
+                <div class="small fw-semibold">Phản hồi từ shop</div>
+                <div class="small mt-1">{{ rv.reply }}</div>
+              </div>
             </article>
           </div>
         </article>
@@ -133,23 +140,22 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import Swal from "sweetalert2";
-import AppHeader from "@/components/layout/AppHeader.vue";
 import AppFooter from "@/components/layout/AppFooter.vue";
 import ProductCard from "@/components/home/ProductCard.vue";
 import ProductPurchaseModal from "@/components/product/ProductPurchaseModal.vue";
-import authService from "@/services/auth.service";
 import cartService from "@/services/cart.service";
 import checkoutService from "@/services/checkout.service";
 import ProductService from "@/services/product.service";
+import { useCustomerHeaderState } from "@/composables/useCustomerHeaderState";
 import { getRetailRow, getUserTierRow } from "@/utils/pricing";
 
 const route = useRoute();
 const router = useRouter();
+const headerStore = useCustomerHeaderState();
 
-const loading = ref(false);
+const loading = ref(true);
 const reviewsLoading = ref(false);
 const error = ref("");
-const cartCount = ref(0);
 const product = ref({});
 const relatedProducts = ref([]);
 const reviews = ref([]);
@@ -160,12 +166,7 @@ const showPurchaseModal = ref(false);
 const selectedProduct = ref(null);
 const purchaseAction = ref("cart");
 
-const user = ref({
-  name: "Guest",
-  avatar: "/default-user-avatar.svg",
-  tier_id: null,
-  profile: null,
-});
+const user = computed(() => headerStore.state.user || headerStore.defaultUser);
 
 const defaultReviewerAvatar = "/default-user-avatar.svg";
 const productId = computed(() => Number(route.params?.id || 0));
@@ -175,6 +176,11 @@ const images = computed(() =>
 );
 const activeImage = computed(() => images.value[activeImageIndex.value] || images.value[0] || "");
 const avgRatingText = computed(() => Number(reviewSummary.value?.avg_rating || product.value?.rating || 0).toFixed(1));
+const productAvailabilityText = computed(() => getAvailabilityText(product.value));
+const productAvailabilityClass = computed(() =>
+  product.value?.availability_status === "available" ? "text-success" : "text-danger",
+);
+const canPurchaseProduct = computed(() => product.value?.is_available !== false);
 
 function formatVnd(n) {
   return new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(Number(n || 0));
@@ -210,6 +216,9 @@ function mapToDisplayProduct(raw, currentUser) {
     colors: raw?.colors || [],
     prices: raw?.prices || [],
     stock_quantity: Number(raw?.stock_quantity || 0),
+    availability_status: String(raw?.availability_status || "available"),
+    availability_message: String(raw?.availability_message || ""),
+    is_available: Boolean(raw?.is_available ?? true),
     unit: raw?.unit || "",
   };
 }
@@ -232,8 +241,19 @@ function mapToCard(raw, currentUser) {
     color_stocks: mapped?.color_stocks || [],
     prices: mapped?.prices || [],
     stock_quantity: Number(mapped?.stock_quantity || 0),
+    availability_status: String(mapped?.availability_status || "available"),
+    availability_message: String(mapped?.availability_message || ""),
+    is_available: Boolean(mapped?.is_available ?? true),
     unit: mapped?.unit || "",
   };
+}
+
+function getAvailabilityText(item = {}) {
+  const status = String(item?.availability_status || "available");
+  if (status === "unavailable") return "Sản phẩm không khả dụng";
+  if (status === "out_of_stock") return "Sản phẩm đã hết hàng";
+  if (status === "insufficient_stock") return "Sản phẩm đã hết hàng";
+  return "Sản phẩm đang khả dụng";
 }
 
 function mapReviewItem(raw = {}) {
@@ -249,6 +269,7 @@ function mapReviewItem(raw = {}) {
     id: Number(raw?.id || 0),
     rating: Number(raw?.rating || 0),
     content: raw?.content == null ? "" : String(raw.content),
+    reply: raw?.reply == null ? "" : String(raw.reply),
     created_at: raw?.created_at || null,
     reviewer: {
       name: String(raw?.reviewer?.name || "Khách hàng"),
@@ -287,7 +308,9 @@ async function handleConfirmPurchase(payload) {
     }
 
     const res = await cartService.addItem(payload);
-    cartCount.value = cartService.getCountFromItems(res?.cart?.items || []);
+    window.dispatchEvent(new CustomEvent("cart-updated", {
+      detail: { count: cartService.getCountFromItems(res?.cart?.items || []) },
+    }));
     await Swal.fire("Thành công!", res?.message || "Thêm vào giỏ hàng thành công!", "success");
   } catch (e) {
     const msg =
@@ -295,24 +318,6 @@ async function handleConfirmPurchase(payload) {
       e?.response?.data?.error ||
       (purchaseAction.value === "buy-now" ? "Đặt hàng thất bại." : "Thêm vào giỏ hàng thất bại.");
     await Swal.fire("Lỗi", msg, "error");
-  }
-}
-
-async function fetchMe() {
-  try {
-    const meRes = await authService.me();
-    const me = meRes?.data ?? meRes;
-    const meUser = me?.user ?? me ?? {};
-
-    user.value = {
-      ...meUser,
-      name: meUser?.name || "Guest",
-      avatar: meUser?.avatar || "/default-user-avatar.svg",
-      tier_id: meUser?.tier_id ?? meUser?.profile?.tier ?? null,
-      profile: meUser?.profile ?? null,
-    };
-  } catch {
-    user.value = { name: "Guest", avatar: "/default-user-avatar.svg", tier_id: null, profile: null };
   }
 }
 
@@ -324,11 +329,14 @@ async function fetchProductDetail() {
   error.value = "";
 
   try {
-    const res = await ProductService.getCustomerProductDetail(productId.value, { status: "actived" });
+    const [res, reviewRes] = await Promise.all([
+      ProductService.getCustomerProductDetail(productId.value, { status: "actived" }),
+      ProductService.getCustomerProductReviews(productId.value),
+    ]);
     const rawProduct = res?.data?.product || null;
     const rawRelated = Array.isArray(res?.data?.related_products) ? res.data.related_products : [];
-    const rawReviewSummary = res?.data?.review_summary || {};
-    const rawPreviewReviews = Array.isArray(res?.data?.reviews_preview) ? res.data.reviews_preview : [];
+    const rawReviewSummary = reviewRes?.data?.summary || res?.data?.review_summary || {};
+    const rawReviews = Array.isArray(reviewRes?.data?.items) ? reviewRes.data.items : [];
 
     if (!rawProduct) {
       error.value = "Không tìm thấy sản phẩm.";
@@ -340,7 +348,7 @@ async function fetchProductDetail() {
 
     product.value = mapToDisplayProduct(rawProduct, user.value);
     relatedProducts.value = rawRelated.map((p) => mapToCard(p, user.value));
-    reviews.value = rawPreviewReviews.map(mapReviewItem);
+    reviews.value = rawReviews.map(mapReviewItem);
     reviewSummary.value = {
       avg_rating: Number(rawReviewSummary?.avg_rating || rawProduct?.rating || 0),
       total_reviews: Number(rawReviewSummary?.total_reviews || rawProduct?.reviews_count || 0),
@@ -356,12 +364,7 @@ async function fetchProductDetail() {
 }
 
 onMounted(async () => {
-  await fetchMe();
-  try {
-    cartCount.value = await cartService.getCount();
-  } catch {
-    cartCount.value = 0;
-  }
+  await headerStore.initHeaderState();
   await fetchProductDetail();
 });
 
@@ -499,6 +502,13 @@ watch(
   object-fit: cover;
   border-radius: 8px;
   border: 1px solid var(--border-color);
+}
+
+.review-reply-box {
+  border-left: 3px solid var(--main-color);
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
 }
 
 @media (max-width: 991px) {
