@@ -1,6 +1,5 @@
 <template>
   <div>
-    <AppHeader :cart-count="0" />
 
     <main class="container py-4">
       <div class="d-flex align-items-center justify-content-between mb-3">
@@ -33,7 +32,6 @@
 <script setup>
 import { onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
-import AppHeader from "@/components/layout/AppHeader.vue";
 import AppFooter from "@/components/layout/AppFooter.vue";
 import MessageService from "@/services/message.service";
 

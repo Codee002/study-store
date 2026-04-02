@@ -1,6 +1,5 @@
 <template>
   <div>
-    <AppHeader :cart-count="0" />
 
     <main class="container py-4">
       <div class="chat-shell card card-soft shadow-sm">
@@ -171,8 +170,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import dayjs from "dayjs";
-import AppHeader from "@/components/layout/AppHeader.vue";
 import AppFooter from "@/components/layout/AppFooter.vue";
+import { useCustomerHeaderState } from "@/composables/useCustomerHeaderState";
 import MessageService from "@/services/message.service";
 
 const route = useRoute();
@@ -187,11 +186,18 @@ const conversation = ref(null);
 const loading = ref(true);
 const error = ref("");
 const sending = ref(false);
-const currentUserId = ref(getCurrentUserId());
+const syncingRead = ref(false);
+const headerStore = useCustomerHeaderState();
+const currentUserId = computed(() => {
+  const headerUserId = Number(headerStore.state.user?.id || 0);
+  if (headerUserId) return headerUserId;
+  return getCurrentUserId();
+});
 const channelName = computed(() =>
   currentUserId.value ? `user.${currentUserId.value}` : null
 );
 let echoChannel = null;
+let activeChannelName = null;
 const openMenuId = ref(null);
 
 const orderedMessages = computed(() =>
@@ -277,6 +283,20 @@ async function loadMessages(conversationId) {
   markMessagesSeen();
 }
 
+async function syncConversationRead(conversationId) {
+  if (!conversationId || syncingRead.value) return;
+  syncingRead.value = true;
+  try {
+    const res = await MessageService.fetchMessages(conversationId);
+    messages.value = (res?.messages || []).map(mapMessage);
+    markMessagesSeen();
+  } catch {
+    // keep current chat flow working even if read sync misses once
+  } finally {
+    syncingRead.value = false;
+  }
+}
+
 async function bootstrap() {
   loading.value = true;
   error.value = "";
@@ -291,7 +311,6 @@ async function bootstrap() {
 
     if (convId) {
       await loadMessages(convId);
-       startRealtime();
     } else {
       error.value = "Không tìm thấy cuộc trò chuyện với admin.";
     }
@@ -415,6 +434,34 @@ async function send() {
   }
 }
 
+function applyReadUpdates(event) {
+  if (!event?.conversation_id) return;
+  if (String(event.conversation_id) !== String(conversation.value?.id)) return;
+
+  const updates = Array.isArray(event.messages) ? event.messages : [];
+  if (!updates.length) return;
+
+  const partnerId = conversation.value?.admin?.id;
+  let changed = false;
+
+  messages.value = messages.value.map((message) => {
+    const matched = updates.find((item) => String(item.id) === String(message.id));
+    if (!matched) return message;
+
+    const readIds = Array.isArray(matched.read_by_user_ids) ? matched.read_by_user_ids : [];
+    changed = true;
+    return {
+      ...message,
+      is_read: readIds.includes(currentUserId.value),
+      is_read_by_partner: partnerId ? readIds.includes(partnerId) : message.is_read_by_partner,
+    };
+  });
+
+  if (changed) {
+    nextTick(scrollToBottom);
+  }
+}
+
 async function recall(message) {
   if (!conversation.value || message.sender !== "me" || message.type === "recalled") return;
   openMenuId.value = null;
@@ -446,10 +493,11 @@ function removePending(id) {
 }
 
 function stopRealtime() {
-  if (channelName.value && window.Echo) {
-    window.Echo.leave(channelName.value);
+  if (activeChannelName && window.Echo) {
+    window.Echo.leave(activeChannelName);
   }
   echoChannel = null;
+  activeChannelName = null;
 }
 
 function handleIncomingMessage(event) {
@@ -462,17 +510,17 @@ function handleIncomingMessage(event) {
   const normalized = mapIncoming(event);
   upsertMessage(normalized);
   nextTick(scrollToBottom);
-  markMessagesSeen();
+  syncConversationRead(conversation.value?.id);
 }
 
 function startRealtime() {
-  console.log(channelName.value)
   if (!channelName.value || !window.Echo) return;
   stopRealtime();
-  echoChannel = window.Echo.private(channelName.value).listen(
-    ".MessageSent",
-    handleIncomingMessage
-  );
+  activeChannelName = channelName.value;
+  echoChannel = window.Echo
+    .private(channelName.value)
+    .listen(".MessageSent", handleIncomingMessage)
+    .listen(".MessageReadUpdated", applyReadUpdates);
 }
 
 function scrollToBottom() {
@@ -488,12 +536,28 @@ function markMessagesSeen() {
   window.dispatchEvent(new CustomEvent("customer-messages-read"));
 }
 
-onMounted(bootstrap);
 onBeforeUnmount(stopRealtime);
 watch(
   () => route.params.id,
   () => bootstrap()
 );
+
+watch(
+  [channelName, () => conversation.value?.id],
+  ([nextChannel, conversationId]) => {
+    if (!nextChannel || !conversationId) {
+      stopRealtime();
+      return;
+    }
+    startRealtime();
+  },
+  { immediate: true },
+);
+
+onMounted(async () => {
+  await headerStore.initHeaderState();
+  await bootstrap();
+});
 </script>
 
 <style scoped>
