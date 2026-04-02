@@ -55,6 +55,8 @@ Route::prefix('admin')->name('admin.')->group(function () {
 Route::get('/vnpay/return', [OrderController::class, 'vnpayReturn']);
 Route::get('/vnpay/ipn', [OrderController::class, 'vnpayIpn']);
 
+Route::get('products/recommendations', [ProductController::class, 'recommendations']);
+
 Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('categories', CategoryController::class);
     Route::apiResource('suppliers', SupplierController::class);
@@ -69,6 +71,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('products/get-home-products', [ProductController::class, 'getHomeProducts']);
     Route::get('products/{id}/customer-detail', [ProductController::class, 'getCustomerProductDetail']);
     Route::get('products/{id}/reviews', [ProductController::class, 'getCustomerProductReviews']);
+    Route::get('products/{id}/purchase-stats', [ProductController::class, 'purchaseStats']);
     Route::apiResource('products', ProductController::class);
 
     Route::apiResource('payments', PaymentController::class);
@@ -104,7 +107,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('orders/admin-create-meta', [OrderController::class, 'adminCreateMeta']);
     Route::post('orders', [OrderController::class, 'adminCreateOrder']);
     Route::get('orders', [OrderController::class, 'adminOrders']);
+    Route::get('orders/evaluates', [OrderController::class, 'adminEvaluates']);
     Route::get('orders/{id}', [OrderController::class, 'adminOrderDetail']);
+    Route::post('orders/evaluates/{evaluate}/reply', [OrderController::class, 'replyEvaluate']);
     Route::post('orders/{id}/approve', [OrderController::class, 'approveOrder']);
     Route::post('orders/{id}/reject', [OrderController::class, 'rejectOrder']);
 
