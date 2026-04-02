@@ -1,6 +1,5 @@
 ﻿<template>
   <div>
-    <AppHeader :cart-count="cartCount" :user="user" />
 
     <main class="container py-4">
       <section class="orders-shell">
@@ -89,24 +88,13 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
 import Swal from "sweetalert2";
-import AppHeader from "@/components/layout/AppHeader.vue";
 import AppFooter from "@/components/layout/AppFooter.vue";
-import authService from "@/services/auth.service";
-import cartService from "@/services/cart.service";
 import orderService from "@/services/order.service";
 
-const cartCount = ref(0);
-const loading = ref(false);
+const loading = ref(true);
 const orders = ref([]);
 const activeStatus = ref("all");
 const fallbackImage = "https://via.placeholder.com/64x64?text=No+Image";
-
-const user = ref({
-  name: "Guest",
-  avatar: "/default-user-avatar.svg",
-  tier_id: null,
-  profile: null,
-});
 
 const statusTabs = [
   { value: "all", label: "Tất cả" },
@@ -156,28 +144,6 @@ function orderDetailTo(order) {
   return { name: "order-detail", params: { id: Number(order?.id || 0) } };
 }
 
-async function fetchMe() {
-  try {
-    const meRes = await authService.me();
-    const me = meRes?.data ?? meRes;
-    const meUser = me?.user ?? me ?? {};
-    user.value = {
-      ...meUser,
-      name: meUser?.name || "Guest",
-      avatar: meUser?.avatar || "/default-user-avatar.svg",
-      tier_id: meUser?.tier_id ?? meUser?.profile?.tier ?? null,
-      profile: meUser?.profile ?? null,
-    };
-  } catch {
-    user.value = {
-      name: "Guest",
-      avatar: "/default-user-avatar.svg",
-      tier_id: null,
-      profile: null,
-    };
-  }
-}
-
 async function loadOrders() {
   loading.value = true;
   try {
@@ -191,17 +157,8 @@ async function loadOrders() {
   }
 }
 
-async function loadCartCount() {
-  try {
-    cartCount.value = await cartService.getCount();
-  } catch {
-    cartCount.value = 0;
-  }
-}
-
 onMounted(async () => {
-  await fetchMe();
-  await Promise.all([loadCartCount(), loadOrders()]);
+  await loadOrders();
 });
 </script>
 

@@ -1,6 +1,5 @@
 ﻿<template>
   <div>
-    <AppHeader :cart-count="cartCount" :user="user" />
 
     <main class="container py-4">
       <section class="order-detail-shell">
@@ -234,6 +233,10 @@
                         </div>
                         <div v-else class="small text-muted mt-1">Chưa chọn tệp mới</div>
                       </div>
+                      <div v-if="draft.reply" class="review-reply-box mt-2">
+                        <div class="small fw-semibold">Phản hồi từ admin</div>
+                        <div class="small text-muted mt-1">{{ draft.reply }}</div>
+                      </div>
                       <div v-if="draft.is_evaluated" class="small text-muted mt-2">
                         Có thể chỉnh sửa đánh giá và bấm lưu để cập nhật.
                       </div>
@@ -327,30 +330,23 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import Swal from "sweetalert2";
-import AppHeader from "@/components/layout/AppHeader.vue";
 import AppFooter from "@/components/layout/AppFooter.vue";
-import authService from "@/services/auth.service";
-import cartService from "@/services/cart.service";
 import orderService from "@/services/order.service";
+import { useCustomerHeaderState } from "@/composables/useCustomerHeaderState";
 
 const route = useRoute();
+const headerStore = useCustomerHeaderState();
 const orderId = computed(() => Number(route.params?.id || 0));
 const fallbackImage = "https://via.placeholder.com/96x96?text=No+Image";
 
-const cartCount = ref(0);
-const loading = ref(false);
+const loading = ref(true);
 const order = ref(null);
 const cancelling = ref(false);
 const confirming = ref(false);
 const submittingReview = ref(false);
 const reviewDrafts = ref([]);
 
-const user = ref({
-  name: "Guest",
-  avatar: "/default-user-avatar.svg",
-  tier_id: null,
-  profile: null,
-});
+const user = computed(() => headerStore.state.user || headerStore.defaultUser);
 
 const canCancel = computed(() => String(order.value?.status || "") === "pending");
 const canComplete = computed(() => String(order.value?.status || "") === "shipping");
@@ -403,6 +399,7 @@ function initReviewDrafts() {
     can_review: Boolean(row?.can_review),
     rating: Number(row?.evaluate?.rating || 0),
     content: row?.evaluate?.content ? String(row.evaluate.content) : "",
+    reply: row?.evaluate?.reply ? String(row.evaluate.reply) : "",
     existingMedias: Array.isArray(row?.evaluate?.medias) ? row.evaluate.medias : [],
     deletedMediaIds: [],
     deletedMedias: [],
@@ -453,31 +450,6 @@ function revokePreviewUrls(previews = []) {
   previews.forEach((p) => {
     if (p?.url) URL.revokeObjectURL(p.url);
   });
-}
-
-async function fetchMe() {
-  try {
-    const meRes = await authService.me();
-    const me = meRes?.data ?? meRes;
-    const meUser = me?.user ?? me ?? {};
-    user.value = {
-      ...meUser,
-      name: meUser?.name || "Guest",
-      avatar: meUser?.avatar || "/default-user-avatar.svg",
-      tier_id: meUser?.tier_id ?? meUser?.profile?.tier ?? null,
-      profile: meUser?.profile ?? null,
-    };
-  } catch {
-    user.value = { name: "Guest", avatar: "/default-user-avatar.svg", tier_id: null, profile: null };
-  }
-}
-
-async function loadCartCount() {
-  try {
-    cartCount.value = await cartService.getCount();
-  } catch {
-    cartCount.value = 0;
-  }
 }
 
 async function loadOrder() {
@@ -689,8 +661,8 @@ function printInvoice() {
 }
 
 onMounted(async () => {
-  await fetchMe();
-  await Promise.all([loadCartCount(), loadOrder()]);
+  await headerStore.initHeaderState();
+  await loadOrder();
 });
 
 onBeforeUnmount(() => {
@@ -863,6 +835,13 @@ onBeforeUnmount(() => {
 
 .review-media-wrapper {
   position: relative;
+}
+
+.review-reply-box {
+  border-left: 3px solid var(--main-color);
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .restore-media-btn {

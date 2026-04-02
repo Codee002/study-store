@@ -37,6 +37,10 @@ class CartService {
       prices,
       unit: product?.unit || "",
       stock_quantity: Number(item?.stock_quantity || 0),
+      availability_status: String(item?.availability_status || "available"),
+      availability_message: String(item?.availability_message || ""),
+      is_available: Boolean(item?.is_available ?? true),
+      can_checkout: Boolean(item?.can_checkout ?? true),
     };
   }
 

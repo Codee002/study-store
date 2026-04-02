@@ -1,6 +1,5 @@
 <template>
   <div>
-    <AppHeader :cart-count="0" :user="user" />
 
     <main class="container py-4">
       <section class="result-shell">
@@ -31,9 +30,7 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import AppHeader from "@/components/layout/AppHeader.vue";
 import AppFooter from "@/components/layout/AppFooter.vue";
-import authService from "@/services/auth.service";
 import checkoutService from "@/services/checkout.service";
 
 const route = useRoute();
@@ -43,13 +40,6 @@ const loading = ref(true);
 const orderId = ref(0);
 const txnRef = ref(String(route.query?.txn_ref || ""));
 const localStatus = ref(String(route.query?.status || "processing"));
-
-const user = ref({
-  name: "Guest",
-  avatar: "/default-user-avatar.svg",
-  tier_id: null,
-  profile: null,
-});
 
 const statusText = computed(() => {
   if (orderId.value > 0) return "Thanh toán thành công.";
@@ -72,23 +62,6 @@ function goOrderDetail() {
   }
 }
 
-async function fetchMe() {
-  try {
-    const meRes = await authService.me();
-    const me = meRes?.data ?? meRes;
-    const meUser = me?.user ?? me ?? {};
-    user.value = {
-      ...meUser,
-      name: meUser?.name || "Guest",
-      avatar: meUser?.avatar || "/default-user-avatar.svg",
-      tier_id: meUser?.tier_id ?? meUser?.profile?.tier ?? null,
-      profile: meUser?.profile ?? null,
-    };
-  } catch {
-    user.value = { name: "Guest", avatar: "/default-user-avatar.svg", tier_id: null, profile: null };
-  }
-}
-
 async function checkVNPayStatus() {
   if (!txnRef.value) {
     loading.value = false;
@@ -108,7 +81,6 @@ async function checkVNPayStatus() {
 }
 
 onMounted(async () => {
-  await fetchMe();
   await checkVNPayStatus();
 });
 </script>

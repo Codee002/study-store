@@ -190,13 +190,14 @@ import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import Swal from "sweetalert2";
 import AppFooter from "@/components/layout/AppFooter.vue";
-import authService from "@/services/auth.service";
 import cartService from "@/services/cart.service";
 import checkoutService from "@/services/checkout.service";
+import { useCustomerHeaderState } from "@/composables/useCustomerHeaderState";
 import { getAppliedPriceRow } from "@/utils/pricing";
 
 const route = useRoute();
 const router = useRouter();
+const headerStore = useCustomerHeaderState();
 
 const shippingFee = 30000;
 const cartCount = ref(0);
@@ -213,12 +214,7 @@ const selectedPaymentId = ref(0);
 const openAddressList = ref(false);
 const placingOrder = ref(false);
 const checkoutErrorMessage = ref("");
-const user = ref({
-  name: "Guest",
-  avatar: "/default-user-avatar.svg",
-  tier_id: null,
-  profile: null,
-});
+const user = computed(() => headerStore.state.user || headerStore.defaultUser);
 
 const isBuyNowMode = computed(() => String(route.query?.mode || "") === "buy-now");
 
@@ -455,29 +451,6 @@ async function fetchCheckoutOptions() {
   }
 }
 
-async function fetchMe() {
-  try {
-    const meRes = await authService.me();
-    const me = meRes?.data ?? meRes;
-    const meUser = me?.user ?? me ?? {};
-
-    user.value = {
-      ...meUser,
-      name: meUser?.name || "Guest",
-      avatar: meUser?.avatar || "/default-user-avatar.svg",
-      tier_id: meUser?.tier_id ?? meUser?.profile?.tier ?? null,
-      profile: meUser?.profile ?? null,
-    };
-  } catch {
-    user.value = {
-      name: "Guest",
-      avatar: "/default-user-avatar.svg",
-      tier_id: null,
-      profile: null,
-    };
-  }
-}
-
 async function loadData() {
   loading.value = true;
   try {
@@ -488,12 +461,7 @@ async function loadData() {
     if (isBuyNowMode.value) {
       buyNowDraft.value = checkoutService.getBuyNowItem();
       rawItems.value = [];
-      try {
-        cartCount.value = await cartService.getCount();
-        window.dispatchEvent(new Event("cart-updated"));
-      } catch {
-        cartCount.value = 0;
-      }
+      cartCount.value = 0;
     } else {
       checkoutService.clearBuyNowItem();
       buyNowDraft.value = null;
@@ -502,7 +470,9 @@ async function loadData() {
         const cart = await cartService.getCart();
         rawItems.value = cart?.items || [];
         cartCount.value = cartService.getCountFromItems(rawItems.value);
-        window.dispatchEvent(new Event("cart-updated"));
+        window.dispatchEvent(new CustomEvent("cart-updated", {
+          detail: { count: cartCount.value },
+        }));
       } catch {
         rawItems.value = [];
         cartCount.value = 0;
@@ -601,7 +571,7 @@ async function placeOrder() {
 }
 
 onMounted(async () => {
-  await fetchMe();
+  await headerStore.initHeaderState();
   await loadData();
 });
 </script>

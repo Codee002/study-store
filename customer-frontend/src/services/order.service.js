@@ -39,6 +39,10 @@ class OrderService {
                   item.evaluate?.content === null || item.evaluate?.content === undefined
                     ? null
                     : String(item.evaluate.content),
+                reply:
+                  item.evaluate?.reply === null || item.evaluate?.reply === undefined
+                    ? null
+                    : String(item.evaluate.reply),
                 created_at: item.evaluate?.created_at || null,
                 medias: Array.isArray(item.evaluate?.medias)
                   ? item.evaluate.medias.map((m) => ({
