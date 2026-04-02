@@ -135,7 +135,7 @@
                       {{ item.title || fallbackTitle(item) }}
                     </div>
                     <div class="small text-muted text-wrap">
-                      {{ item.content || item.body || item.message || 'Ban co mot thong bao moi' }}
+                      {{ item.content || item.body || item.message || 'Bạn có 1 thông báo mới' }}
                     </div>
                     <div class="small text-muted fst-italic">
                       {{ formatRelative(item.created_at) }}
@@ -153,7 +153,7 @@
           title="Gio hang"
         >
           <i class="fa-solid fa-cart-shopping"></i>
-          <span class="badge rounded-pill bg-dark badge-cart">{{ cartCount }}</span>
+          <span class="badge rounded-pill bg-dark badge-cart">{{ displayCartCount }}</span>
         </RouterLink>
 
         <div class="dropdown">
@@ -191,18 +191,16 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { useRouter } from "vue-router";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import Swal from "sweetalert2";
 import authService from "@/services/auth.service";
-import notificationService from "@/services/notification.service";
-import MessageService from "@/services/message.service";
 import dayjs from "dayjs";
-import { useRoute } from "vue-router";
-import { watch } from "vue";
+import { useCustomerHeaderState } from "@/composables/useCustomerHeaderState";
 
 const router = useRouter();
 const route = useRoute();
+const headerStore = useCustomerHeaderState();
 
 const props = defineProps({
   cartCount: { type: Number, default: 0 },
@@ -217,41 +215,14 @@ const props = defineProps({
 
 const emit = defineEmits(["search"]);
 const keyword = ref("");
+const isNotificationOpen = ref(false);
+const isMessageOpen = ref(false);
+const notificationRef = ref(null);
+const messageRef = ref(null);
 
-const DEFAULT_USER = {
-  name: "Guest",
-  avatar: "/default-user-avatar.svg",
-  tier_id: null,
-  profile: null,
-};
-const HEADER_ME_SYNC_KEY = "customer_header_me_synced";
-
-const localUser = ref(readStoredUser() || props.user || DEFAULT_USER);
-
-function readStoredUser() {
-  try {
-    const raw = localStorage.getItem("currentUser");
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-}
-
-function normalizeUserPayload(res) {
-  const me = res?.data ?? res;
-  const meUser = me?.user ?? me ?? {};
-  return {
-    ...meUser,
-    name: meUser?.name || "Guest",
-    avatar:
-      meUser?.avatar ||
-      meUser?.profile?.avatar ||
-      "/default-user-avatar.svg",
-    tier_id: meUser?.tier_id ?? meUser?.profile?.tier ?? null,
-    profile: meUser?.profile ?? null,
-  };
-}
-
+const localUser = computed(
+  () => headerStore.state.user || props.user || headerStore.defaultUser,
+);
 const resolvedAvatar = computed(
   () =>
     localUser.value?.avatar ||
@@ -260,29 +231,19 @@ const resolvedAvatar = computed(
     props.user?.profile?.avatar ||
     "/default-user-avatar.svg",
 );
-
-const notifications = ref([]);
-const recentMessages = ref([]);
-const notificationsLoaded = ref(false);
-const isNotificationOpen = ref(false);
-const isMessageOpen = ref(false);
-const isLoadingNoti = ref(false);
-const msgLoading = ref(false);
-const markingAll = ref(false);
-const notificationRef = ref(null);
-const messageRef = ref(null);
-const toast = Swal.mixin({
-  toast: true,
-  position: "bottom-end",
-  showConfirmButton: false,
-  timer: 5000,
-  timerProgressBar: true,
-});
-let subscribedChannel = null;
+const notifications = computed(() => headerStore.state.notifications);
+const recentMessages = computed(() => headerStore.state.messages);
+const notificationsLoaded = computed(() => headerStore.state.notificationsLoaded);
+const isLoadingNoti = computed(() => headerStore.state.isLoadingNoti);
+const msgLoading = computed(() => headerStore.state.msgLoading);
+const markingAll = computed(() => headerStore.state.markingAll);
+const unreadMessages = computed(() => headerStore.state.unreadMessages);
+const displayCartCount = computed(
+  () => headerStore.state.cartCount || props.cartCount || 0,
+);
 const unreadCount = computed(
   () => notifications.value.filter((n) => !n.read_at && !n.is_read).length,
 );
-const unreadMessages = ref(0);
 const groupedNotifications = computed(() => {
   const map = {};
   notifications.value.forEach((item) => {
@@ -310,149 +271,34 @@ function emitSearch() {
   emit("search", keyword.value);
 }
 
-async function loadMe() {
-  if (!authService.isLoggin()) return;
-
-  try {
-    const res = await authService.me();
-    const normalized = normalizeUserPayload(res);
-    localUser.value = normalized;
-    localStorage.setItem("currentUser", JSON.stringify(normalized));
-  } catch {
-    // Keep current user data if request fails.
-  }
-}
-
 function goAccountSettings() {
   router.push("/account/settings");
-}
-
-function onUserUpdated() {
-  const stored = readStoredUser();
-  if (stored) {
-    localUser.value = stored;
-    return;
-  }
-  loadMe();
 }
 
 async function onLogout() {
   try {
     await authService.logout();
-    sessionStorage.removeItem(HEADER_ME_SYNC_KEY);
-    localUser.value = { ...DEFAULT_USER };
-    notifications.value = [];
+    headerStore.resetHeaderState();
     await router.push({ name: "login" });
   } catch {
-    await Swal.fire("Lï¿½-i", "Äï¿½fng xuáº¥t tháº¥t báº¡i. Vui lÃ²ng thá»­ láº¡i.", "error");
+    await Swal.fire("Loi", "Dang xuat that bai. Vui long thu lai.", "error");
   }
 }
 
-function resolveTarget(item) {
-  if (item.url) return item.url;
-  if (item.type === "order" && item.url_id) return `/orders/${item.url_id}`;
-  if (item.type === "price-quotation" && item.url_id)
-    return `/price-quotation?ref=${item.url_id}`;
-  return "/orders";
-}
-
-function mapMessage(raw, meId) {
-  return {
-    id: raw.id,
-    sender: raw.user_id === meId ? "me" : "them",
-    text: raw.content,
-    type: raw.type,
-    created_at: raw.created_at,
-  };
-}
-
-async function fetchMessages() {
-  if (!authService.isLoggin()) return;
-  msgLoading.value = true;
-  try {
-    const res = await MessageService.ensureConversation();
-    const convId = res?.conversation?.id;
-    const meId = res?.conversation?.user?.id || localUser.value?.id;
-    if (!convId) {
-      recentMessages.value = [];
-      unreadMessages.value = 0;
-      return;
+  function resolveTarget(item) {
+    if (item.url) return item.url;
+    if (item.type === "order" && item.url_id) return `/orders/${item.url_id}`;
+    if (item.type === "evaluate" && item.url_id) return `/orders/${item.url_id}`;
+    if (item.type === "evaluate-reply" && item.url_id) return `/orders/${item.url_id}`;
+    if (item.type === "price-quotation" && item.url_id) {
+      return `/price-quotation?ref=${item.url_id}`;
     }
-    const msgs = await MessageService.fetchMessages(convId);
-    const mapped = (msgs?.messages || []).map((m) => mapMessage(m, meId));
-    recentMessages.value = mapped.slice(-5).reverse().map((m) => ({
-      ...m,
-      unread: m.sender === "them" && isNewMessage(m.created_at),
-      preview:
-        m.type === "media" ? "Đã gửi phương tiện" : m.text || "Tin nhắn mới",
-      fromName: res?.conversation?.admin?.name || "Admin",
-      conversation_id: convId,
-    }));
-    unreadMessages.value = recentMessages.value.filter((m) => m.unread).length;
-  } catch {
-    recentMessages.value = [];
-  } finally {
-    msgLoading.value = false;
-  }
-}
-
-async function loadNotifications() {
-  if (!authService.isLoggin()) return;
-  isLoadingNoti.value = true;
-  try {
-    const res = await notificationService.list();
-    notifications.value = res?.data || res?.notifications || res || [];
-  } catch {
-    notifications.value = [];
-  } finally {
-    isLoadingNoti.value = false;
-    notificationsLoaded.value = true;
-  }
-}
-
-async function markOneRead(item) {
-  if (!item || item.is_read || item.read_at) return;
-  item.is_read = true;
-  item.read_at = new Date().toISOString();
-  try {
-    await notificationService.markAsRead(item.id || item.url_id);
-  } catch {
-    // ignore silently
-  }
-}
-
-async function markAllRead() {
-  if (!notifications.value.length) return;
-  markingAll.value = true;
-  notifications.value = notifications.value.map((n) => ({
-    ...n,
-    is_read: true,
-    read_at: n.read_at || new Date().toISOString(),
-  }));
-  try {
-    await notificationService.markAllAsRead();
-  } catch {
-    // ignore silently
-  } finally {
-    markingAll.value = false;
-  }
-}
-
-function isNewMessage(createdAt) {
-  const seen = localStorage.getItem("customer_chat_seen_at");
-  if (!createdAt) return false;
-  return !seen || new Date(createdAt) > new Date(seen);
-}
-
-function markMessagesSeen() {
-  localStorage.setItem("customer_chat_seen_at", new Date().toISOString());
-  unreadMessages.value = 0;
-  recentMessages.value = recentMessages.value.map((m) => ({ ...m, unread: false }));
+  return "/orders";
 }
 
 function goChat(msg) {
   closeMessages();
-  markMessagesSeen();
+  headerStore.markMessagesSeen();
   if (msg?.conversation_id) {
     router.push({ name: "contact.chat", params: { id: msg.conversation_id } });
   } else {
@@ -463,18 +309,23 @@ function goChat(msg) {
 function toggleNotifications() {
   isNotificationOpen.value = !isNotificationOpen.value;
   if (isNotificationOpen.value && !notificationsLoaded.value) {
-    loadNotifications();
+    headerStore.loadNotifications();
   }
 }
 
 function toggleMessages() {
   isMessageOpen.value = !isMessageOpen.value;
   if (isMessageOpen.value && !recentMessages.value.length) {
-    fetchMessages();
+    headerStore.fetchMessages();
   }
 }
+
 function closeMessages() {
   isMessageOpen.value = false;
+}
+
+function markAllRead() {
+  return headerStore.markAllRead();
 }
 
 function handleClickOutside(event) {
@@ -486,11 +337,13 @@ function handleClickOutside(event) {
   }
 }
 
-function fallbackTitle(item) {
-  if (item.type === "order") return "Cập nhật đơn hàng";
-  if (item.type === "price-quotation") return "Cập nhật báo giá";
-  return "Thông báo";
-}
+  function fallbackTitle(item) {
+    if (item.type === "order") return "Cập nhật đơn hàng";
+    if (item.type === "evaluate") return "Đánh giá mới";
+    if (item.type === "evaluate-reply") return "Phản hồi đánh giá";
+    if (item.type === "price-quotation") return "Cập nhật báo giá";
+    return "Thông báo";
+  }
 
 function formatTime(t) {
   if (!t) return "--:--";
@@ -504,12 +357,12 @@ function formatRelative(dateStr) {
   if (Number.isNaN(d.getTime())) return "";
   const diffMs = Date.now() - d.getTime();
   const diffMin = Math.round(diffMs / 60000);
-  if (diffMin < 1) return "Vua xong";
-  if (diffMin < 60) return `${diffMin} phut truoc`;
+  if (diffMin < 1) return "Vừa xong";
+  if (diffMin < 60) return `${diffMin} phút trước`;
   const diffH = Math.round(diffMin / 60);
-  if (diffH < 24) return `${diffH} gio truoc`;
+  if (diffH < 24) return `${diffH} giờ trước`;
   const diffD = Math.round(diffH / 24);
-  if (diffD < 7) return `${diffD} ngay truoc`;
+  if (diffD < 7) return `${diffD} ngày trước`;
   return d.toLocaleDateString();
 }
 
@@ -541,7 +394,7 @@ function formatDayLabel(key) {
 }
 
 async function openNotification(item) {
-  await markOneRead(item);
+  await headerStore.markOneRead(item);
   const target = resolveTarget(item);
   if (target) {
     router.push(target);
@@ -549,138 +402,21 @@ async function openNotification(item) {
   isNotificationOpen.value = false;
 }
 
-function onIncomingNotification(event) {
-  const payload = event?.detail;
-  if (!payload) return;
-  notifications.value = [
-    {
-      ...payload,
-      is_read: false,
-      read_at: null,
-      created_at: payload.created_at || new Date().toISOString(),
-    },
-    ...notifications.value,
-  ];
-}
-
-function refreshEchoAuthHeader() {
-  try {
-    const token = localStorage.getItem("access_token") || "";
-    if (window.Echo?.connector?.pusher?.config?.auth) {
-      window.Echo.connector.pusher.config.auth.headers = {
-        Authorization: `Bearer ${token}`,
-      };
-    }
-  } catch {
-    // ignore
-  }
-}
-
-function subscribeRealtime() {
-  try {
-    const raw = localStorage.getItem("currentUser");
-    const user = raw ? JSON.parse(raw) : null;
-    const userId = user?.id;
-    if (!userId) return;
-    if (subscribedChannel) return;
-    refreshEchoAuthHeader();
-
-    subscribedChannel = window.Echo?.private?.(`user.${userId}`);
-    if (!subscribedChannel) return;
-
-    subscribedChannel.listen(".NotificationPushed", (e) => {
-      const n = e?.notification || e;
-      const payload = {
-        ...n,
-        is_read: false,
-        read_at: null,
-        created_at: n?.created_at || new Date().toISOString(),
-      };
-      notifications.value = [payload, ...notifications.value];
-      window.dispatchEvent(new CustomEvent("notification-received", { detail: payload }));
-      toast.fire({
-        icon: "info",
-        title: payload.title || "Thông báo mới",
-        text: payload.content || "Bạn có thông báo mới",
-      });
-    });
-
-    subscribedChannel.listen(".MessageSent", (e) => {
-      const payload = e?.detail || e;
-      if (!payload) return;
-      const isCurrentChat =
-        route.name === "contact.chat" &&
-        String(route.params?.id) === String(payload.conversation_id);
-      const isFromMe = Number(payload.user_id) === Number(userId);
-      if (isCurrentChat || isFromMe) {
-        markMessagesSeen();
-        return;
-      }
-
-      const preview =
-        payload.type === "media" ? "Đã gửi phương tiện" : payload.content || "Tin nhắn mới";
-      const entry = {
-        id: payload.id,
-        conversation_id: payload.conversation_id,
-        fromName: "Admin",
-        preview,
-        created_at: payload.created_at || new Date().toISOString(),
-        unread: true,
-      };
-      recentMessages.value = [entry, ...recentMessages.value].slice(0, 5);
-      unreadMessages.value += 1;
-    });
-  } catch {
-    // ignore
-  }
-}
-
-function unsubscribeRealtime() {
-  try {
-    const raw = localStorage.getItem("currentUser");
-    const user = raw ? JSON.parse(raw) : null;
-    const userId = user?.id;
-    if (subscribedChannel && userId) {
-      window.Echo?.leave?.(`user.${userId}`);
-    }
-  } catch {
-    // ignore
-  }
-  subscribedChannel = null;
-}
-
 onMounted(() => {
-  const stored = readStoredUser();
-  if (stored) {
-    localUser.value = stored;
-  }
-
-  const synced = sessionStorage.getItem(HEADER_ME_SYNC_KEY) === "1";
-  if (!synced) {
-    loadMe();
-    sessionStorage.setItem(HEADER_ME_SYNC_KEY, "1");
-  }
-  window.addEventListener("customer-user-updated", onUserUpdated);
-  window.addEventListener("notification-received", onIncomingNotification);
-  window.addEventListener("customer-messages-read", markMessagesSeen);
+  headerStore.initHeaderState();
   window.addEventListener("click", handleClickOutside);
-  subscribeRealtime();
-  fetchMessages();
 });
 
 onBeforeUnmount(() => {
-  window.removeEventListener("customer-user-updated", onUserUpdated);
-  window.removeEventListener("notification-received", onIncomingNotification);
-  window.removeEventListener("customer-messages-read", markMessagesSeen);
   window.removeEventListener("click", handleClickOutside);
-  unsubscribeRealtime();
 });
 
 watch(
-  () => route.name,
-  (name) => {
-    if (name === "contact.chat") {
-      markMessagesSeen();
+  () => route.fullPath,
+  () => {
+    headerStore.ensureHeaderSession();
+    if (route.name === "contact.chat") {
+      headerStore.markMessagesSeen();
     }
   },
   { immediate: true },

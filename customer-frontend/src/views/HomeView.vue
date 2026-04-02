@@ -1,6 +1,5 @@
 <template>
   <div>
-    <AppHeader :cart-count="cartCount" :user="user" @search="onSearch" />
 
     <main>
       <HeroBanner />
@@ -13,6 +12,28 @@
         @add-to-cart="openPurchaseModal($event, 'cart')"
         @buy-now="openPurchaseModal($event, 'buy-now')"
       />
+
+      <section class="container py-4">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h5 class="mb-0">Sản phẩm gợi ý cho bạn</h5>
+          <button class="btn btn-outline-secondary btn-sm" @click="loadMoreRecommendations">
+            Tải thêm
+          </button>
+        </div>
+        <div class="row g-3" v-if="recommendedVisible.length">
+          <div v-for="p in recommendedVisible" :key="p.id" class="col-12 col-sm-6 col-lg-3">
+            <ProductCard
+              :product="p"
+              :show-detail-button="false"
+              @add-to-cart="openPurchaseModal($event, 'cart')"
+              @buy-now="openPurchaseModal($event, 'buy-now')"
+            />
+          </div>
+        </div>
+        <div v-else class="text-muted text-center py-3">
+          Chưa có dữ liệu gợi ý, hãy xem thêm sản phẩm để chúng tôi đề xuất.
+        </div>
+      </section>
     </main>
 
     <ProductPurchaseModal
@@ -31,29 +52,26 @@
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import Swal from "sweetalert2";
-import AppHeader from "@/components/layout/AppHeader.vue";
 import AppFooter from "@/components/layout/AppFooter.vue";
 import HeroBanner from "@/components/home/HeroBanner.vue";
 import FeaturedProducts from "@/components/home/FeaturedProducts.vue";
 import ProductPurchaseModal from "@/components/product/ProductPurchaseModal.vue";
-import authService from "@/services/auth.service";
 import cartService from "@/services/cart.service";
 import checkoutService from "@/services/checkout.service";
 import ProductService from "@/services/product.service";
+import { useCustomerHeaderState } from "@/composables/useCustomerHeaderState";
 import { getRetailRow, getUserTierRow } from "@/utils/pricing";
 
-const cartCount = ref(0);
 const router = useRouter();
-const user = ref({
-  name: "Guest",
-  avatar: "/default-user-avatar.svg",
-  tier_id: null,
-  profile: null,
-});
+const headerStore = useCustomerHeaderState();
+const user = computed(() => headerStore.state.user || headerStore.defaultUser);
 
 const keyword = ref("");
 const activeCategory = ref("Tất cả");
 const products = ref([]);
+const recommendedAll = ref([]);
+const recommendedVisible = ref([]);
+const recCursor = ref(0);
 const showPurchaseModal = ref(false);
 const selectedProduct = ref(null);
 const purchaseAction = ref("cart");
@@ -92,7 +110,7 @@ function mapToHomeCard(p, currentUser) {
 
 const categories = computed(() => {
   const set = new Set((products.value || []).map((p) => p.category).filter(Boolean));
-  return ["Tất cả", ...Array.from(set)];
+  return ["Tất cả", ...Array.from(set).slice(0, 5)];
 });
 
 const filteredProducts = computed(() => {
@@ -106,6 +124,20 @@ const filteredProducts = computed(() => {
 
 function onSearch(k) {
   keyword.value = String(k || "");
+}
+
+function loadMoreRecommendations() {
+  if (!recommendedAll.value.length) {
+    fetchRecommendations(true);
+    return;
+  }
+  recCursor.value += 8;
+  if (recCursor.value >= recommendedAll.value.length) {
+    // đã đi hết 24 -> refresh từ server
+    fetchRecommendations(true);
+    return;
+  }
+  recommendedVisible.value = recommendedAll.value.slice(recCursor.value, recCursor.value + 8);
 }
 
 function openPurchaseModal(product, action = "cart") {
@@ -123,7 +155,9 @@ async function handleConfirmPurchase(payload) {
     }
 
     const res = await cartService.addItem(payload);
-    cartCount.value = cartService.getCountFromItems(res?.cart?.items || []);
+    window.dispatchEvent(new CustomEvent("cart-updated", {
+      detail: { count: cartService.getCountFromItems(res?.cart?.items || []) },
+    }));
     await Swal.fire("Th?nh c?ng!", res?.message || "Th?m v?o gi? h?ng th?nh c?ng!", "success");
   } catch (e) {
     const msg =
@@ -134,32 +168,9 @@ async function handleConfirmPurchase(payload) {
   }
 }
 
-async function fetchMe() {
-  try {
-    const meRes = await authService.me();
-    const me = meRes?.data ?? meRes;
-    const meUser = me?.user ?? me ?? {};
-
-    user.value = {
-      ...meUser,
-      name: meUser?.name || "Guest",
-      avatar: meUser?.avatar || "/default-user-avatar.svg",
-      tier_id: meUser?.tier_id ?? meUser?.profile?.tier ?? null,
-      profile: meUser?.profile ?? null,
-    };
-  } catch {
-    user.value = {
-      name: "Guest",
-      avatar: "/default-user-avatar.svg",
-      tier_id: null,
-      profile: null,
-    };
-  }
-}
-
 async function fetchHomeProducts() {
   try {
-    const res = await ProductService.getHomeProducts({ per_page: 16, page: 1, status: "actived" });
+    const res = await ProductService.getHomeProducts({ per_page: 8, page: 1, status: "actived" });
     const items = Array.isArray(res?.items) ? res.items : [];
 
     const activeItems = items.filter((p) => {
@@ -168,19 +179,37 @@ async function fetchHomeProducts() {
       return true;
     });
 
-    products.value = activeItems.slice(0, 16).map((p) => mapToHomeCard(p, user.value));
+    products.value = activeItems.slice(0, 8).map((p) => mapToHomeCard(p, user.value));
   } catch {
     products.value = [];
   }
 }
 
-onMounted(async () => {
-  await fetchMe();
+async function fetchRecommendations(refresh = false) {
   try {
-    cartCount.value = await cartService.getCount();
+    // Gửi recent_ids để AI có dữ liệu nếu user chưa có lịch sử
+    const recentIds = (products.value || []).slice(0, 3).map((p) => p.id).join(",");
+    const res = await ProductService.getRecommendations({
+      recent_ids: recentIds,
+      refresh: refresh ? 1 : undefined,
+    });
+    const items = res?.data?.items ?? res?.items ?? [];
+    recommendedAll.value = items.map((p) => mapToHomeCard(p, user.value)).slice(0, 24);
+    // fallback: nếu rỗng, dùng sản phẩm nổi bật hiện có
+    if (!recommendedAll.value.length && products.value.length) {
+      recommendedAll.value = products.value.slice(0, 24);
+    }
+    recCursor.value = 0;
+    recommendedVisible.value = recommendedAll.value.slice(0, 8);
   } catch {
-    cartCount.value = 0;
+    recommendedAll.value = [];
+    recommendedVisible.value = [];
   }
+}
+
+onMounted(async () => {
+  await headerStore.initHeaderState();
   await fetchHomeProducts();
+  await fetchRecommendations();
 });
 </script>
