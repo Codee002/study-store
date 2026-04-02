@@ -10,6 +10,7 @@
           <div class="flex-grow-1">
             <h5 class="mb-1">{{ product?.name || "-" }}</h5>
             <div class="text-muted small">Tồn kho: {{ maxQty }}</div>
+            <div :class="availabilityClass">{{ availabilityText }}</div>
             <div class="price-highlight mt-2">{{ formatVnd(unitPrice) }}/{{ product?.unit || "sp" }}</div>
             <div class="small text-muted" v-if="appliedPriceRow">
               Áp dụng mốc giá từ số lượng: {{ Number(appliedPriceRow.min_quantity || 1) }}
@@ -126,6 +127,19 @@ const appliedPriceRow = computed(() => {
 
 const unitPrice = computed(() => Number(appliedPriceRow.value?.price || 0));
 const totalPrice = computed(() => Number(unitPrice.value) * Number(quantity.value || 0));
+const availabilityText = computed(() => {
+  const source = selectedColorOption.value || props.product || {};
+  const status = String(source?.availability_status || props.product?.availability_status || "available");
+  if (status === "unavailable") return "Sản phẩm không khả dụng";
+  if (status === "out_of_stock" || status === "insufficient_stock") return "Sản phẩm đã hết hàng";
+  return "Sản phẩm đang khả dụng";
+});
+const availabilityClass = computed(() => {
+  const source = selectedColorOption.value || props.product || {};
+  return String(source?.availability_status || props.product?.availability_status || "available") === "available"
+    ? "small text-success mt-1"
+    : "small text-danger mt-1";
+});
 
 function formatVnd(n) {
   return new Intl.NumberFormat("vi-VN", {

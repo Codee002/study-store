@@ -1,6 +1,5 @@
 <template>
   <div>
-    <AppHeader :cart-count="cartCount" :user="headerUser" />
 
     <main class="container py-4">
       <section class="account-shell">
@@ -45,6 +44,9 @@
                 @click="activeTab = 'dealer'"
               >
                 <i class="fa-solid fa-store me-2"></i>Đăng ký đại lý
+              </button>
+              <button type="button" class="tab-btn text-danger" @click="onLogout">
+                <i class="fa-solid fa-right-from-bracket me-2"></i>Đăng xuất
               </button>
             </div>
           </div>
@@ -454,17 +456,16 @@
 
 <script setup>
 import { computed, onMounted, ref } from "vue";
+import { useRouter } from "vue-router";
 import { Form, Field, ErrorMessage } from "vee-validate";
 import * as yup from "yup";
 import Swal from "sweetalert2";
-import AppHeader from "@/components/layout/AppHeader.vue";
 import AppFooter from "@/components/layout/AppFooter.vue";
 import authService from "@/services/auth.service";
 import profileService from "@/services/profile.service";
-import cartService from "@/services/cart.service";
 
+const router = useRouter();
 const activeTab = ref("profile");
-const cartCount = ref(0);
 const profile = ref(null);
 const currentTier = ref(null);
 const deliveryInfos = ref([]);
@@ -750,6 +751,28 @@ async function setDefaultAddress(id) {
   }
 }
 
+async function onLogout() {
+  const ask = await Swal.fire({
+    title: "Đăng xuất?",
+    text: "Bạn sẽ cần đăng nhập lại để tiếp tục mua sắm.",
+    icon: "question",
+    showCancelButton: true,
+    confirmButtonText: "Đăng xuất",
+    cancelButtonText: "Hủy",
+  });
+  if (!ask.isConfirmed) return;
+
+  try {
+    await authService.logout();
+  } catch {
+    // ignore API failure, still clear local session
+  }
+  localStorage.removeItem("access_token");
+  localStorage.removeItem("currentUser");
+  sessionStorage.removeItem("customer_header_me_synced");
+  await router.push({ name: "login" });
+}
+
 async function submitDealerRegistration(values, { setErrors }) {
   try {
     if (!dealerTiers.value.length) {
@@ -817,12 +840,6 @@ async function loadDealerRegistrationMeta() {
 }
 
 onMounted(async () => {
-  try {
-    cartCount.value = await cartService.getCount();
-  } catch {
-    cartCount.value = 0;
-  }
-
   await loadProfile();
   await loadDeliveryInfos();
   await loadDealerRegistrationMeta();

@@ -18,12 +18,12 @@
         <div class="rating"><i class="fa-solid fa-star"></i> {{ product.rating }} <span class="text-muted">({{ product.sold }}+)</span></div>
       </div>
 
-      <div class="d-flex align-items-center justify-content-between gap-2">
-        <div>
+      <div class="product-card-footer d-flex align-items-center justify-content-between gap-2">
+        <div class="price-block">
           <div class="price">{{ formatVnd(product.price) }}</div>
           <div v-if="product.oldPrice != null" class="old-price">{{ formatVnd(product.oldPrice) }}</div>
         </div>
-        <div class="d-flex align-items-center gap-2">
+        <div class="card-actions d-flex align-items-center gap-2">
           <RouterLink
             v-if="showDetailButton"
             :to="`/products/${product.id}`"
@@ -103,11 +103,28 @@ function formatVnd(n) {
 .price {
   font-weight: 800;
   color: var(--dark);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .old-price {
   font-size: 0.85rem;
   color: var(--font-extra-color);
   text-decoration: line-through;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.product-card-footer {
+  min-width: 0;
+}
+.price-block {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.card-actions {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
 }
 .rating i {
   color: #f4b400;
@@ -126,6 +143,10 @@ function formatVnd(n) {
   color: var(--font-color);
   background: transparent;
   font-weight: 600;
+}
+.card-actions .btn {
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .btn-outline-main:hover {
   background: var(--hover-background-color);
