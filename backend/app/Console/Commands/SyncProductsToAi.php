@@ -2,14 +2,17 @@
 
 namespace App\Console\Commands;
 
+use App\Models\Evaluate;
 use App\Models\Product;
 use App\Services\AiSearchClient;
 use Illuminate\Console\Command;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 class SyncProductsToAi extends Command
 {
-    protected $signature = 'ai:sync-products {--chunk=200 : Số lượng sản phẩm mỗi lần gửi} {--status=actived : Chỉ sync sản phẩm có warehouse_detail.status này (để trống = lấy tất cả)}';
-    protected $description = 'Đẩy toàn bộ sản phẩm hiện có sang AI semantic search';
+    protected $signature = 'ai:sync-products {--chunk=200 : So luong san pham moi lan gui} {--status=actived : Chi sync san pham co warehouse_detail.status nay (de trong = lay tat ca)}';
+    protected $description = 'Day toan bo san pham hien co sang AI semantic search';
 
     public function handle(AiSearchClient $ai): int
     {
@@ -29,17 +32,31 @@ class SyncProductsToAi extends Command
                 });
             })
             ->chunk($chunk, function ($products) use (&$count, $ai) {
-                $payload = $products->map(function ($p) {
+                $metrics = $this->buildMetrics($products->pluck('id')->filter()->values());
+
+                $payload = $products->map(function ($p) use ($metrics) {
+                    $prices = collect($p->prices ?? [])
+                        ->pluck('price')
+                        ->filter(fn ($price) => $price !== null)
+                        ->values();
+
                     return [
                         'id'          => (string) $p->id,
                         'title'       => $p->name,
                         'description' => (string) ($p->des ?? ''),
                         'category'    => (string) (optional($p->category)->name ?? ''),
-                        'tags'        => $p->colors?->pluck('name')->filter()->values()->all() ?? [],
-                        'attrs'       => ['unit' => (string) ($p->unit ?? '')],
+                        'tags'        => $p->colors?->pluck('color_name')->filter()->values()->all() ?? [],
+                        'attrs'       => [
+                            'unit'       => (string) ($p->unit ?? ''),
+                            'product_id' => (string) $p->id,
+                        ],
                         'price'       => optional($p->prices->first())->price,
+                        'price_min'   => $prices->isNotEmpty() ? (float) $prices->min() : null,
+                        'price_max'   => $prices->isNotEmpty() ? (float) $prices->max() : null,
+                        'rating'      => $metrics['ratings'][(string) $p->id] ?? null,
+                        'sold'        => $metrics['sold'][(string) $p->id] ?? null,
                         'image'       => $p->images?->first()?->url ?? null,
-                        'status'      => (string) ($p->status ?? 'actived'),
+                        'status'      => 'actived',
                     ];
                 })->values()->toArray();
 
@@ -50,5 +67,31 @@ class SyncProductsToAi extends Command
 
         $this->info("Done. Total sent: {$count}");
         return Command::SUCCESS;
+    }
+
+    protected function buildMetrics(Collection $productIds): array
+    {
+        $ratings = Evaluate::query()
+            ->select('product_id', DB::raw('ROUND(AVG(rating), 1) as avg_rating'))
+            ->whereIn('product_id', $productIds)
+            ->groupBy('product_id')
+            ->pluck('avg_rating', 'product_id')
+            ->mapWithKeys(fn ($value, $key) => [(string) $key => $value !== null ? (float) $value : null])
+            ->all();
+
+        $sold = DB::table('order_details')
+            ->join('orders', 'orders.id', '=', 'order_details.order_id')
+            ->select('order_details.product_id', DB::raw('COUNT(DISTINCT order_details.order_id) as sold_orders'))
+            ->whereIn('order_details.product_id', $productIds)
+            ->whereIn('orders.status', ['completed'])
+            ->groupBy('order_details.product_id')
+            ->pluck('sold_orders', 'order_details.product_id')
+            ->mapWithKeys(fn ($value, $key) => [(string) $key => (int) $value])
+            ->all();
+
+        return [
+            'ratings' => $ratings,
+            'sold'    => $sold,
+        ];
     }
 }

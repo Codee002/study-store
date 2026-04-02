@@ -42,6 +42,13 @@ class ProductController extends Controller
                 $products = Product::query()
                     ->with(['images', 'category', 'colors', 'prices.tier'])
                     ->whereIn('id', $ids)
+                    ->whereIn('products.id', function ($sub) {
+                        $sub->from('warehouse_details')
+                            ->selectRaw('product_id')
+                            ->where('status', 'actived')
+                            ->groupBy('product_id')
+                            ->havingRaw('SUM(quantity) > 0');
+                    })
                     ->orderByRaw('FIELD(id, ' . implode(',', array_map('intval', $ids)) . ')')
                     ->paginate($perPage, ['*'], 'page', 1);
 
@@ -164,6 +171,13 @@ class ProductController extends Controller
                 $products = Product::query()
                     ->with(['images', 'category', 'colors', 'prices.tier'])
                     ->whereIn('id', $ids)
+                    ->whereIn('products.id', function ($sub) {
+                        $sub->from('warehouse_details')
+                            ->selectRaw('product_id')
+                            ->where('status', 'actived')
+                            ->groupBy('product_id')
+                            ->havingRaw('SUM(quantity) > 0');
+                    })
                     ->orderByRaw('FIELD(id, ' . implode(',', array_map('intval', $ids)) . ')')
                     ->get();
 
