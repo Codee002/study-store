@@ -41,22 +41,22 @@
             </div>
             <div class="notif-list">
               <div v-if="messagesLoading" class="p-3 small text-center text-muted">Đang tải...</div>
-              <div v-else-if="!contacts.length" class="p-3 small text-center text-muted">Chưa có tin nhắn</div>
+              <div v-else-if="!recentContacts.length" class="p-3 small text-center text-muted">Chưa có tin nhắn</div>
               <button
                 v-else
-                v-for="c in contacts"
+                v-for="c in recentContacts"
                 :key="c.conversation_id || c.id"
                 class="notif-item w-100 text-start border-0 bg-transparent d-flex align-items-start gap-2 px-3 py-2"
                 @click="openChat(c)"
               >
                 <span class="dot" :class="{ unread: c.unread > 0 }"></span>
-                <div class="flex-grow-1">
-                  <div class="fw-semibold d-flex align-items-center gap-2">
-                    {{ c.name }}
+                <div class="flex-grow-1 notif-copy">
+                  <div class="fw-semibold d-flex align-items-center gap-2 notif-title">
+                    <span class="text-truncate">{{ c.name }}</span>
                     <span v-if="c.unread" class="badge bg-danger-subtle text-danger rounded-pill">{{ c.unread }}</span>
                   </div>
-                  <div class="small text-muted text-truncate">
-                    {{ c.last_message || "Chưa có tin nhắn" }}
+                  <div class="small text-muted notif-preview">
+                    {{ truncateMessage(c.last_message || "Chưa có tin nhắn") }}
                   </div>
                 </div>
                 <div class="small text-muted">{{ formatTime(c.updated_at) }}</div>
@@ -164,6 +164,7 @@ const headerStore = useAdminHeaderState();
 
 const notifications = computed(() => headerStore.state.notifications);
 const contacts = computed(() => headerStore.state.contacts);
+const recentContacts = computed(() => [...contacts.value].slice(0, 5));
 const isOpen = ref(false);
 const isMsgOpen = ref(false);
 const dropdownRef = ref(null);
@@ -277,6 +278,13 @@ function formatTime(t) {
   const d = new Date(t);
   if (Number.isNaN(d.getTime())) return "--:--";
   return d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+}
+
+function truncateMessage(value, max = 60) {
+  const text = String(value || "").trim();
+  if (!text) return "Chưa có tin nhắn";
+  if (text.length <= max) return text;
+  return `${text.slice(0, max).trimEnd()}...`;
 }
 
 function formatRelative(dateStr) {
@@ -407,6 +415,18 @@ onBeforeUnmount(() => {
 }
 .notif-item:last-child {
   border-bottom: none;
+}
+.notif-copy {
+  min-width: 0;
+}
+.notif-title {
+  min-width: 0;
+}
+.notif-preview {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 .group-heading {
   background: var(--main-extra-bg);

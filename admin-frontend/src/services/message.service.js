@@ -18,10 +18,11 @@ class MessageService {
     return (await this.api.get(`/${conversationId}`)).data;
   }
 
-  async sendMessage(conversationId, { content, files }) {
+  async sendMessage(conversationId, { content, files, productIds }) {
     const fd = new FormData();
     if (content) fd.append("content", content);
     (files || []).forEach((file) => fd.append("files[]", file));
+    (productIds || []).forEach((productId) => fd.append("product_ids[]", productId));
     return (
       await this.api.post(`/${conversationId}/send`, fd, {
         headers: { "Content-Type": "multipart/form-data" },

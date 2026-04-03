@@ -61,7 +61,6 @@ import OrderCreateView from "../views/orders/OrderCreateView.vue";
 import OrderDetailView from "../views/orders/OrderDetailView.vue";
 import ProductStatsView from "../views/reports/ProductStatsView.vue";
 import ChatView from "../views/messages/ChatView.vue";
-import ContactListView from "../views/messages/ContactListView.vue";
 import EvaluateListView from "../views/evaluates/EvaluateListView.vue";
 
 import AuthService from "@/services/auth.service";
@@ -373,12 +372,12 @@ const routes = [
       },
 
       // Messages
-      {
-        path: "/messages",
-        name: "messages.list",
-        component: ContactListView,
-        meta: { title: "Liên hệ" },
-      },
+        {
+          path: "/messages",
+          name: "messages.list",
+          component: ChatView,
+          meta: { title: "Liên hệ" },
+        },
       {
         path: "/messages/:id",
         name: "messages.chat",
