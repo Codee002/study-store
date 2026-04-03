@@ -14,8 +14,8 @@ class DiscountService {
     return (await this.api.post("/", data)).data;
   }
 
-  async get(id) {
-    return (await this.api.get(`/${id}`)).data;
+  async get(id, params = {}) {
+    return (await this.api.get(`/${id}`, { params })).data;
   }
 
   async update(id, data) {
