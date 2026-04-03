@@ -17,21 +17,25 @@
     <div class="col-12">
       <div class="card card-soft">
         <div class="card-body">
-          <div class="row g-2">
-            <div class="col-12 col-lg-5">
+          <div class="row g-2 align-items-end">
+            <div class="col-12 col-lg-4">
+              <label class="form-label small mb-1">Tìm theo tên / mã đơn</label>
               <div class="input-group">
                 <span class="input-group-text bg-transparent">
                   <i class="fa-solid fa-magnifying-glass"></i>
                 </span>
                 <input
-                  v-model="keyword"
+                  v-model="keywordInput"
                   class="form-control bg-transparent"
                   type="text"
                   placeholder="Tìm mã đơn, tên khách, email, SĐT..."
+                  @keydown.enter.prevent="applyFilters"
                 />
               </div>
             </div>
-            <div class="col-12 col-md-6 col-lg-3">
+
+            <div class="col-12 col-md-6 col-lg-2">
+              <label class="form-label small mb-1">Trạng thái</label>
               <select v-model="status" class="form-select bg-transparent">
                 <option value="all">Tất cả trạng thái</option>
                 <option value="pending">Đang duyệt</option>
@@ -41,7 +45,70 @@
                 <option value="rejected">Từ chối</option>
               </select>
             </div>
-            <div class="col-12 col-md-6 col-lg-4 d-flex justify-content-md-end">
+
+            <div class="col-12 col-md-6 col-lg-2">
+              <label class="form-label small mb-1">Thanh toán</label>
+              <select v-model="paymentId" class="form-select bg-transparent">
+                <option value="all">Tất cả phương thức</option>
+                <option
+                  v-for="payment in paymentOptions"
+                  :key="payment.id"
+                  :value="String(payment.id)"
+                >
+                  {{ payment.name }}
+                </option>
+              </select>
+            </div>
+
+            <div class="col-12 col-md-6 col-lg-2">
+              <label class="form-label small mb-1">Sắp xếp</label>
+              <select v-model="sortBy" class="form-select bg-transparent">
+                <option value="created_at_desc">Mới nhất</option>
+                <option value="created_at_asc">Cũ nhất</option>
+                <option value="total_price_desc">Giá trị cao nhất</option>
+                <option value="total_price_asc">Giá trị thấp nhất</option>
+              </select>
+            </div>
+
+            <div class="col-12 col-md-6 col-lg-2">
+              <label class="form-label small mb-1">Khoảng giá</label>
+              <div class="filter-range">
+                <input
+                  v-model="priceMin"
+                  class="form-control bg-transparent"
+                  type="number"
+                  min="0"
+                  placeholder="Từ"
+                />
+                <span>-</span>
+                <input
+                  v-model="priceMax"
+                  class="form-control bg-transparent"
+                  type="number"
+                  min="0"
+                  placeholder="Đến"
+                />
+              </div>
+            </div>
+
+            <div class="col-12 col-md-8 col-lg-4">
+              <label class="form-label small mb-1">Thời gian đặt</label>
+              <div class="filter-range">
+                <input v-model="orderedFrom" class="form-control bg-transparent" type="date" />
+                <span>-</span>
+                <input v-model="orderedTo" class="form-control bg-transparent" type="date" />
+              </div>
+            </div>
+
+            <div class="col-12 col-md-4 col-lg-2 d-flex gap-2 filter-actions">
+              <button class="btn btn-primary btn-sm flex-grow-1" @click="applyFilters">Áp dụng
+              </button>
+              <button class="btn btn-outline-secondary btn-sm" @click="resetFilters">
+                Làm mới
+              </button>
+            </div>
+
+            <div class="col-12 d-flex justify-content-md-end">
               <span class="badge bg-secondary-subtle text-secondary align-self-center">
                 Tổng: {{ meta.total }}
               </span>
@@ -195,12 +262,20 @@ import Swal from "sweetalert2";
 import OrderService from "@/services/order.service";
 import { formatMoney, formatDateTimeVN as formatDateTime } from "@/utils/utils";
 
-const keyword = ref("");
+const keywordInput = ref("");
+const appliedKeyword = ref("");
 const status = ref("all");
+const paymentId = ref("all");
+const priceMin = ref("");
+const priceMax = ref("");
+const orderedFrom = ref("");
+const orderedTo = ref("");
+const sortBy = ref("created_at_desc");
 const page = ref(1);
 const perPage = 10;
 const loading = ref(false);
 const items = ref([]);
+const paymentOptions = ref([]);
 const meta = ref({
   current_page: 1,
   per_page: perPage,
@@ -240,16 +315,29 @@ function statusClass(statusValue) {
   return "bg-secondary-subtle text-secondary";
 }
 
+function buildParams() {
+  return {
+    q: appliedKeyword.value.trim() || undefined,
+    status: status.value,
+    payment_id: paymentId.value !== "all" ? Number(paymentId.value) : undefined,
+    price_min: priceMin.value !== "" ? Number(priceMin.value) : undefined,
+    price_max: priceMax.value !== "" ? Number(priceMax.value) : undefined,
+    ordered_from: orderedFrom.value || undefined,
+    ordered_to: orderedTo.value || undefined,
+    sort_by: sortBy.value || "created_at_desc",
+    page: page.value,
+    per_page: perPage,
+  };
+}
+
 async function fetchOrders() {
   loading.value = true;
   try {
-    const res = await OrderService.getAll({
-      q: keyword.value.trim() || undefined,
-      status: status.value,
-      page: page.value,
-      per_page: perPage,
-    });
+    const res = await OrderService.getAll(buildParams());
     items.value = Array.isArray(res?.data?.items) ? res.data.items : [];
+    paymentOptions.value = Array.isArray(res?.data?.filters?.payments)
+      ? res.data.filters.payments
+      : [];
     meta.value = res?.data?.meta || {
       current_page: 1,
       per_page: perPage,
@@ -264,12 +352,27 @@ async function fetchOrders() {
   }
 }
 
-onMounted(fetchOrders);
-
-watch([keyword, status], async () => {
+async function applyFilters() {
+  appliedKeyword.value = keywordInput.value.trim();
   page.value = 1;
   await fetchOrders();
-});
+}
+
+async function resetFilters() {
+  keywordInput.value = "";
+  appliedKeyword.value = "";
+  status.value = "all";
+  paymentId.value = "all";
+  priceMin.value = "";
+  priceMax.value = "";
+  orderedFrom.value = "";
+  orderedTo.value = "";
+  sortBy.value = "created_at_desc";
+  page.value = 1;
+  await fetchOrders();
+}
+
+onMounted(fetchOrders);
 
 watch(page, fetchOrders);
 </script>
@@ -333,5 +436,26 @@ watch(page, fetchOrders);
 
 .icon-view {
   color: #0d6efd;
+}
+
+.filter-range {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.filter-range span {
+  opacity: 0.65;
+  flex: 0 0 auto;
+}
+
+.filter-actions {
+  align-self: end;
+}
+
+@media (max-width: 991.98px) {
+  .filter-actions {
+    justify-content: stretch;
+  }
 }
 </style>

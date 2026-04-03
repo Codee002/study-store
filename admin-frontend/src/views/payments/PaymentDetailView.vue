@@ -5,19 +5,19 @@
         class="d-flex align-items-start align-items-md-center justify-content-between gap-2 flex-column flex-md-row"
       >
         <div>
-          <h4 class="mb-1">Chi tiet phuong thuc thanh toan</h4>
+          <h4 class="mb-1">Chi tiết phương thức thanh toán</h4>
           <div class="small opacity-75">ID: {{ id }}</div>
         </div>
 
         <div class="d-flex gap-2">
           <RouterLink class="btn btn-outline-secondary" :to="{ name: 'payments.list' }">
-            <i class="fa-solid fa-arrow-left me-1"></i> Quay lai
+            <i class="fa-solid fa-arrow-left me-1"></i> Quay lại
           </RouterLink>
           <RouterLink
             class="btn btn-outline-secondary"
             :to="{ name: 'payments.edit', params: { id } }"
           >
-            <i class="fa-solid fa-pen-to-square me-1"></i> Chinh sua
+            <i class="fa-solid fa-pen-to-square me-1"></i> Chỉnh sửa
           </RouterLink>
         </div>
       </div>
@@ -27,18 +27,18 @@
       <div class="card card-soft">
         <div class="card-body">
           <div v-if="loading" class="py-4 text-center opacity-75">
-            <i class="fa-solid fa-spinner fa-spin me-2"></i> Dang tai du lieu...
+            <i class="fa-solid fa-spinner fa-spin me-2"></i> Đang tải dữ liệu
           </div>
 
           <div v-else-if="payment">
             <div class="row g-3">
               <div class="col-12 col-md-6">
-                <div class="label">Ma phuong thuc</div>
+                <div class="label">Mã phương thức</div>
                 <div class="value"><span class="code-pill">PAY{{ payment.id }}</span></div>
               </div>
 
               <div class="col-12 col-md-6">
-                <div class="label">Trang thai</div>
+                <div class="label">Trạng thái</div>
                 <div class="value">
                   <span class="badge" :class="statusBadgeClass(payment.status)">
                     {{ statusLabel(payment.status) }}
@@ -47,24 +47,24 @@
               </div>
 
               <div class="col-12">
-                <div class="label">Ten phuong thuc thanh toan</div>
+                <div class="label">Tên phương thức thanh toán</div>
                 <div class="value fw-semibold">{{ payment.name || "-" }}</div>
               </div>
 
               <div class="col-12 col-md-6">
-                <div class="label">Ngay tao</div>
+                <div class="label">Ngày tạo</div>
                 <div class="value">{{ formatDate(payment.created_at) }}</div>
               </div>
 
               <div class="col-12 col-md-6">
-                <div class="label">Cap nhat lan cuoi</div>
+                <div class="label">Cập nhật lần cuối</div>
                 <div class="value">{{ formatDate(payment.updated_at) }}</div>
               </div>
             </div>
           </div>
 
           <div v-else class="py-4 text-center opacity-75">
-            Khong tim thay du lieu phuong thuc thanh toan.
+            Không tìm thấy dữ liệu phương thức thanh toán.
           </div>
         </div>
       </div>
@@ -86,8 +86,8 @@ const loading = ref(true);
 const payment = ref(null);
 
 function statusLabel(status) {
-  if (status === "actived") return "Dang bat";
-  if (status === "disabled") return "Dang tat";
+  if (status === "actived") return "Đang bật";
+  if (status === "disabled") return "Đang tắt";
   return "-";
 }
 

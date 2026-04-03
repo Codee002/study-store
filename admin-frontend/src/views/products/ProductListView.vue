@@ -47,9 +47,16 @@
               </div>
             </div>
 
-            <div
-              class="col-12 col-md-6 col-lg-7 d-flex justify-content-md-end gap-2"
-            >
+            <div class="col-12 col-md-6 col-lg-3">
+              <select v-model="categoryId" class="form-select bg-transparent">
+                <option value="">Tất cả danh mục</option>
+                <option v-for="c in categories" :key="c.id" :value="String(c.id)">
+                  {{ c.name }}
+                </option>
+              </select>
+            </div>
+
+            <div class="col-12 col-md-12 col-lg-4 d-flex justify-content-md-end gap-2">
               <span
                 class="badge bg-secondary-subtle text-secondary align-self-center"
               >
@@ -199,12 +206,15 @@
 import { ref, watch, onMounted } from "vue";
 import Swal from "sweetalert2";
 import ProductService from "../../services/product.service";
+import CategoryService from "../../services/category.service";
 
 const keyword = ref("");
+const categoryId = ref("");
 const page = ref(1);
-const perPage = 8;
+const perPage = 12;
 
 const items = ref([]);
+const categories = ref([]);
 const meta = ref({ current_page: 1, per_page: perPage, total: 0, last_page: 1 });
 const loading = ref(false);
 
@@ -221,6 +231,7 @@ async function fetchProducts() {
   try {
     const res = await ProductService.getAll({
       q: keyword.value.trim() || undefined,
+      category_id: categoryId.value || undefined,
       page: page.value,
       per_page: perPage,
     });
@@ -245,11 +256,21 @@ async function fetchProducts() {
   }
 }
 
+async function fetchCategories() {
+  try {
+    const res = await CategoryService.getAll({ per_page: 200 });
+    categories.value = res?.data?.items ?? res?.items ?? [];
+  } catch {
+    categories.value = [];
+  }
+}
+
 onMounted(async () => {
+  await fetchCategories();
   await fetchProducts();
 });
 
-watch(keyword, async () => {
+watch([keyword, categoryId], async () => {
   page.value = 1;
   await fetchProducts();
 });

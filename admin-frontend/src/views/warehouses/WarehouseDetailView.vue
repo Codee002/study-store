@@ -268,7 +268,7 @@ import WarehouseService from "@/services/warehouse.service";
 import CategoryService from "@/services/category.service";
 import { formatDateTimeVN } from "@/utils/utils";
 
-const route = useRoute
+const route = useRoute();
 const router = useRouter();
 const id = route.params.id;
 

@@ -81,31 +81,33 @@
                 <h5 class="mb-0">Bảng giá theo tier</h5>
                 <div class="small opacity-75">Đơn giá & min quantity</div>
               </div>
-              <div class="table-responsive">
-                <table class="table table-sm align-middle mb-0">
-                  <thead>
-                    <tr>
-                      <th class="ps-3">Tier</th>
-                      <th style="width: 180px">Min quantity</th>
-                      <th style="width: 180px">Đơn giá</th>
-                    </tr>
-                  </thead>
-                  <tbody v-if="sortedPrices.length">
-                    <tr v-for="p in sortedPrices" :key="p.id">
-                      <td class="ps-3">
-                        <div class="fw-semibold">{{ p.tier?.name || "—" }}</div>
-                        <div class="small opacity-75">{{ p.tier?.code || "" }}</div>
-                      </td>
-                      <td>{{ p.min_quantity }}</td>
-                      <td>{{ money(p.price) }}</td>
-                    </tr>
-                  </tbody>
-                  <tbody v-else>
-                    <tr>
-                      <td colspan="3" class="text-center py-3 opacity-75">Chưa có bảng giá.</td>
-                    </tr>
-                  </tbody>
-                </table>
+              <div v-if="!priceRows.length" class="text-center py-3 opacity-75">Chưa có bảng giá.</div>
+              <div v-else class="mt-2 d-flex flex-column gap-2">
+                <div v-for="(row, idx) in priceRows" :key="`price-row-${row.min_quantity}`" class="row-box">
+                  <div class="d-flex align-items-center justify-content-between mb-2">
+                    <div class="fw-semibold">Mức giá #{{ idx + 1 }}</div>
+                    <div class="small opacity-75">
+                      Min: <b>{{ row.min_quantity }}</b>
+                    </div>
+                  </div>
+
+                  <div class="row g-3">
+                    <div
+                      v-for="price in row.prices"
+                      :key="price.id"
+                      class="col-12 col-md-6 col-xl-4"
+                    >
+                      <div class="d-flex align-items-center gap-2 mb-1">
+                        <span class="badge badge-tier">{{ price.tier?.code || "T" }}</span>
+                        <span class="fw-semibold">{{ price.tier?.name || "—" }}</span>
+                      </div>
+
+                      <div class="form-control bg-transparent">
+                        {{ money(price.price) }}
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -196,6 +198,27 @@ const activeImage = computed(() => imageList.value[activeImageIndex.value] || im
 const sortedPrices = computed(() => {
   const prices = product.value?.prices || [];
   return [...prices].sort((a, b) => (a.min_quantity || 0) - (b.min_quantity || 0));
+});
+
+const priceRows = computed(() => {
+  const map = new Map();
+
+  for (const price of sortedPrices.value) {
+    const minQty = Number(price?.min_quantity || 0);
+    if (!map.has(minQty)) {
+      map.set(minQty, []);
+    }
+    map.get(minQty).push(price);
+  }
+
+  return Array.from(map.entries())
+    .map(([min_quantity, prices]) => ({
+      min_quantity,
+      prices: [...prices].sort((a, b) =>
+        String(a?.tier?.name || "").localeCompare(String(b?.tier?.name || "")),
+      ),
+    }))
+    .sort((a, b) => Number(a.min_quantity) - Number(b.min_quantity));
 });
 
 function money(v) {
@@ -295,6 +318,20 @@ onMounted(fetchData);
   border: 1px solid color-mix(in srgb, #38bdf8 40%, transparent);
   color: var(--font-color);
   font-weight: 600;
+}
+.badge-tier {
+  border-radius: 999px;
+  padding: 0.4rem 0.6rem;
+  background: rgba(255, 166, 0, 0.15);
+  border: 1px solid rgba(255, 166, 0, 0.35);
+  color: #ffa500;
+  font-weight: 700;
+}
+.row-box {
+  border: 1px solid var(--border-color);
+  border-radius: 1rem;
+  padding: 1rem;
+  background: rgba(255, 255, 255, 0.02);
 }
 .stat-line {
   display: flex;
