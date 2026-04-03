@@ -90,10 +90,21 @@ class OrderService {
     };
   }
 
-  async getMyOrders(status = "all") {
-    const res = (await this.api.get("/orders/my", { params: { status } })).data;
-    const rows = Array.isArray(res?.data) ? res.data : [];
-    return rows.map((row) => this.normalizeOrder(row));
+  async getMyOrders(params = {}) {
+    const res = (await this.api.get("/orders/my", { params })).data;
+    const payload = res?.data || {};
+    const rows = Array.isArray(payload?.items) ? payload.items : Array.isArray(payload) ? payload : [];
+    return {
+      items: rows.map((row) => this.normalizeOrder(row)),
+      meta: payload?.meta || {
+        current_page: 1,
+        per_page: Number(params?.per_page || 10),
+        total: rows.length,
+        last_page: 1,
+      },
+      filters: payload?.filters || {},
+      status_summary: payload?.status_summary || {},
+    };
   }
 
   async getMyOrderDetail(orderId) {

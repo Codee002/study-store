@@ -1,16 +1,78 @@
-﻿<template>
+<template>
   <div>
-
     <main class="container py-4">
       <section class="orders-shell">
         <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
           <div>
             <h1 class="orders-title mb-1">Đơn hàng đã đặt</h1>
-            <div class="text-muted small">{{ filteredOrders.length }} đơn hàng</div>
+            <div class="text-muted small">{{ meta.total }} đơn hàng</div>
           </div>
           <RouterLink to="/products" class="btn btn-outline-secondary">
             <i class="fa-solid fa-arrow-left me-2"></i>Tiếp tục mua sắm
           </RouterLink>
+        </div>
+
+        <div class="filter-card mb-3">
+          <div class="row g-3 align-items-end">
+            <div class="col-12 col-lg-4 filter-cell">
+              <label class="form-label small mb-1">Tìm theo tên / mã đơn</label>
+              <div class="input-group">
+                <span class="input-group-text bg-transparent">
+                  <i class="fa-solid fa-magnifying-glass"></i>
+                </span>
+                <input
+                  v-model="keywordInput"
+                  class="form-control bg-transparent"
+                  type="text"
+                  placeholder="Tìm mã đơn, tên người nhận, SĐT..."
+                  @keydown.enter.prevent="applyFilters"
+                />
+              </div>
+            </div>
+
+            <div class="col-12 col-md-6 col-lg-2 filter-cell">
+              <label class="form-label small mb-1">Thanh toán</label>
+              <select v-model="paymentId" class="form-select bg-transparent">
+                <option value="all">Tất cả phương thức</option>
+                <option v-for="payment in paymentOptions" :key="payment.id" :value="String(payment.id)">
+                  {{ payment.name }}
+                </option>
+              </select>
+            </div>
+
+            <div class="col-12 col-md-6 col-lg-2 filter-cell">
+              <label class="form-label small mb-1">Sắp xếp</label>
+              <select v-model="sortBy" class="form-select bg-transparent">
+                <option value="created_at_desc">Mới nhất</option>
+                <option value="created_at_asc">Cũ nhất</option>
+                <option value="total_price_desc">Giá trị cao nhất</option>
+                <option value="total_price_asc">Giá trị thấp nhất</option>
+              </select>
+            </div>
+
+            <div class="col-12 col-md-6 col-lg-2 filter-cell">
+              <label class="form-label small mb-1">Khoảng giá</label>
+              <div class="filter-range">
+                <input v-model="priceMin" class="form-control bg-transparent" type="number" min="0" placeholder="Từ" />
+                <span>-</span>
+                <input v-model="priceMax" class="form-control bg-transparent" type="number" min="0" placeholder="Đến" />
+              </div>
+            </div>
+
+            <div class="col-12 col-md-8 col-lg-4 filter-cell">
+              <label class="form-label small mb-1">Thời gian đặt</label>
+              <div class="filter-range">
+                <input v-model="orderedFrom" class="form-control bg-transparent" type="date" />
+                <span>-</span>
+                <input v-model="orderedTo" class="form-control bg-transparent" type="date" />
+              </div>
+            </div>
+
+            <div class="col-12 d-flex justify-content-end gap-2 filter-actions">
+              <button class="btn btn-main btn-sm filter-btn" @click="applyFilters">Áp dụng</button>
+              <button class="btn btn-outline-secondary btn-sm filter-btn" @click="resetFilters">Làm mới</button>
+            </div>
+          </div>
         </div>
 
         <div class="status-tabs mb-3">
@@ -20,7 +82,7 @@
             type="button"
             class="tab-btn"
             :class="{ active: activeStatus === tab.value }"
-            @click="activeStatus = tab.value"
+            @click="setStatus(tab.value)"
           >
             {{ tab.label }}
             <span class="tab-count">{{ countByStatus(tab.value) }}</span>
@@ -32,16 +94,16 @@
           <p class="mb-0 text-muted">Đang tải danh sách đơn hàng...</p>
         </div>
 
-        <div v-else-if="!filteredOrders.length" class="empty-box text-center">
+        <div v-else-if="!orders.length" class="empty-box text-center">
           <i class="fa-solid fa-box-open empty-icon"></i>
           <h5 class="mb-2">Không có đơn hàng</h5>
-          <p class="text-muted mb-3">Trạng thái này hiện chưa có đơn hàng nào.</p>
+          <p class="text-muted mb-3">Chưa có đơn hàng phù hợp với bộ lọc hiện tại.</p>
           <RouterLink to="/products" class="btn btn-main">Mua ngay</RouterLink>
         </div>
 
         <div v-else class="order-list">
           <RouterLink
-            v-for="order in filteredOrders"
+            v-for="order in orders"
             :key="`order-${order.id}`"
             :to="orderDetailTo(order)"
             class="order-card"
@@ -78,6 +140,25 @@
             </div>
           </RouterLink>
         </div>
+
+        <div v-if="meta.total" class="d-flex justify-content-between align-items-center mt-3 flex-wrap gap-2">
+          <div class="small text-muted">
+            Hiển thị {{ (meta.current_page - 1) * meta.per_page + 1 }} -
+            {{ Math.min(meta.current_page * meta.per_page, meta.total) }} / {{ meta.total }}
+          </div>
+
+          <div class="btn-group">
+            <button class="btn btn-outline-secondary btn-sm" :disabled="page === 1" @click="page--">
+              <i class="fa-solid fa-chevron-left"></i>
+            </button>
+            <button class="btn btn-outline-secondary btn-sm" disabled>
+              Trang {{ page }}
+            </button>
+            <button class="btn btn-outline-secondary btn-sm" :disabled="meta.current_page >= meta.last_page" @click="page++">
+              <i class="fa-solid fa-chevron-right"></i>
+            </button>
+          </div>
+        </div>
       </section>
     </main>
 
@@ -86,14 +167,32 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from "vue";
+import { onMounted, ref, watch } from "vue";
 import Swal from "sweetalert2";
 import AppFooter from "@/components/layout/AppFooter.vue";
 import orderService from "@/services/order.service";
 
 const loading = ref(true);
 const orders = ref([]);
+const paymentOptions = ref([]);
+const statusSummary = ref({});
+const keywordInput = ref("");
+const appliedKeyword = ref("");
 const activeStatus = ref("all");
+const paymentId = ref("all");
+const priceMin = ref("");
+const priceMax = ref("");
+const orderedFrom = ref("");
+const orderedTo = ref("");
+const sortBy = ref("created_at_desc");
+const page = ref(1);
+const perPage = 8;
+const meta = ref({
+  current_page: 1,
+  per_page: perPage,
+  total: 0,
+  last_page: 1,
+});
 const fallbackImage = "https://via.placeholder.com/64x64?text=No+Image";
 
 const statusTabs = [
@@ -105,14 +204,8 @@ const statusTabs = [
   { value: "rejected", label: "Từ chối" },
 ];
 
-const filteredOrders = computed(() => {
-  if (activeStatus.value === "all") return orders.value;
-  return orders.value.filter((o) => String(o?.status || "") === activeStatus.value);
-});
-
 function countByStatus(status) {
-  if (status === "all") return orders.value.length;
-  return orders.value.filter((o) => String(o?.status || "") === status).length;
+  return Number(statusSummary.value?.[status] || 0);
 }
 
 function formatDateTime(v) {
@@ -144,10 +237,34 @@ function orderDetailTo(order) {
   return { name: "order-detail", params: { id: Number(order?.id || 0) } };
 }
 
+function buildParams() {
+  return {
+    q: appliedKeyword.value.trim() || undefined,
+    status: activeStatus.value,
+    payment_id: paymentId.value !== "all" ? Number(paymentId.value) : undefined,
+    price_min: priceMin.value !== "" ? Number(priceMin.value) : undefined,
+    price_max: priceMax.value !== "" ? Number(priceMax.value) : undefined,
+    ordered_from: orderedFrom.value || undefined,
+    ordered_to: orderedTo.value || undefined,
+    sort_by: sortBy.value || "created_at_desc",
+    page: page.value,
+    per_page: perPage,
+  };
+}
+
 async function loadOrders() {
   loading.value = true;
   try {
-    orders.value = await orderService.getMyOrders("all");
+    const res = await orderService.getMyOrders(buildParams());
+    orders.value = Array.isArray(res?.items) ? res.items : [];
+    paymentOptions.value = Array.isArray(res?.filters?.payments) ? res.filters.payments : [];
+    statusSummary.value = res?.status_summary || {};
+    meta.value = res?.meta || {
+      current_page: 1,
+      per_page: perPage,
+      total: 0,
+      last_page: 1,
+    };
   } catch (e) {
     const msg = e?.response?.data?.message || "Không thể tải danh sách đơn hàng.";
     await Swal.fire("Lỗi", msg, "error");
@@ -157,7 +274,37 @@ async function loadOrders() {
   }
 }
 
+async function applyFilters() {
+  appliedKeyword.value = keywordInput.value.trim();
+  page.value = 1;
+  await loadOrders();
+}
+
+async function resetFilters() {
+  keywordInput.value = "";
+  appliedKeyword.value = "";
+  activeStatus.value = "all";
+  paymentId.value = "all";
+  priceMin.value = "";
+  priceMax.value = "";
+  orderedFrom.value = "";
+  orderedTo.value = "";
+  sortBy.value = "created_at_desc";
+  page.value = 1;
+  await loadOrders();
+}
+
+async function setStatus(status) {
+  activeStatus.value = status;
+  page.value = 1;
+  await loadOrders();
+}
+
 onMounted(async () => {
+  await loadOrders();
+});
+
+watch(page, async () => {
   await loadOrders();
 });
 </script>
@@ -170,6 +317,71 @@ onMounted(async () => {
 .orders-title {
   font-size: 1.55rem;
   font-weight: 800;
+}
+
+.filter-card {
+  background: var(--main-extra-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  padding: 1rem;
+}
+
+.filter-cell {
+  display: flex;
+  flex-direction: column;
+}
+
+.filter-cell .form-label {
+  min-height: 20px;
+}
+
+.filter-card :deep(.form-control),
+.filter-card :deep(.form-select),
+.filter-card :deep(.input-group-text),
+.filter-card .btn {
+  min-height: 42px;
+}
+
+.filter-card :deep(.input-group) {
+  flex-wrap: nowrap;
+}
+
+.filter-card :deep(.input-group .form-control) {
+  min-width: 0;
+}
+
+.filter-range {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.filter-range > .form-control {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.filter-range span {
+  opacity: 0.65;
+  flex: 0 0 auto;
+}
+
+.filter-actions {
+  align-items: center;
+}
+
+.filter-btn {
+  min-height: 38px !important;
+  padding: 0.4rem 0.9rem;
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+
+@media (max-width: 991.98px) {
+  .filter-actions {
+    justify-content: flex-start !important;
+    flex-wrap: wrap;
+  }
 }
 
 .status-tabs {

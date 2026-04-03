@@ -93,8 +93,8 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from "vue";
-import { useRouter } from "vue-router";
+import { computed, onMounted, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import AppFooter from "@/components/layout/AppFooter.vue";
 import ProductCard from "@/components/home/ProductCard.vue";
 import ProductPurchaseModal from "@/components/product/ProductPurchaseModal.vue";
@@ -106,6 +106,7 @@ import { useCustomerHeaderState } from "@/composables/useCustomerHeaderState";
 import { getRetailRow, getUserTierRow } from "@/utils/pricing";
 
 const PAGE_SIZE = 16;
+const route = useRoute();
 const router = useRouter();
 const headerStore = useCustomerHeaderState();
 const user = computed(() => headerStore.state.user || headerStore.defaultUser);
@@ -285,8 +286,13 @@ async function fetchProducts() {
 }
 
 function onSearchSubmit() {
-  searchKeyword.value = searchInput.value.trim();
+  const nextKeyword = searchInput.value.trim();
+  searchKeyword.value = nextKeyword;
   currentPage.value = 1;
+  router.replace({
+    name: "products",
+    query: nextKeyword ? { q: nextKeyword } : {},
+  });
   fetchProducts();
 }
 
@@ -297,8 +303,23 @@ function onHeaderSearch(value) {
 
 onMounted(async () => {
   await headerStore.initHeaderState();
+  const initialKeyword = String(route.query.q || "").trim();
+  searchInput.value = initialKeyword;
+  searchKeyword.value = initialKeyword;
   await fetchProducts();
 });
+
+watch(
+  () => route.query.q,
+  async (nextQuery) => {
+    const normalized = String(nextQuery || "").trim();
+    if (normalized === searchKeyword.value && normalized === searchInput.value) return;
+    searchInput.value = normalized;
+    searchKeyword.value = normalized;
+    currentPage.value = 1;
+    await fetchProducts();
+  },
+);
 </script>
 
 <style scoped>
@@ -315,5 +336,37 @@ onMounted(async () => {
 
 .btn-main:hover {
   filter: var(--brightness);
+}
+
+.pagination .page-link {
+  color: var(--font-color);
+  background: var(--main-extra-bg);
+  border-color: var(--border-color);
+  box-shadow: none;
+}
+
+.pagination .page-link:hover {
+  color: var(--dark);
+  background: color-mix(in srgb, var(--main-color) 72%, #fff);
+  border-color: var(--hover-border-color);
+}
+
+.pagination .page-link:focus {
+  color: var(--dark);
+  background: color-mix(in srgb, var(--main-color) 72%, #fff);
+  border-color: var(--hover-border-color);
+  box-shadow: 0 0 0 0.2rem color-mix(in srgb, var(--main-color) 28%, transparent);
+}
+
+.pagination .page-item.active .page-link {
+  color: var(--dark);
+  background: var(--main-color);
+  border-color: var(--hover-border-color);
+}
+
+.pagination .page-item.disabled .page-link {
+  color: var(--font-extra-color);
+  background: color-mix(in srgb, var(--main-extra-bg) 88%, #eef2f7);
+  border-color: var(--border-color);
 }
 </style>

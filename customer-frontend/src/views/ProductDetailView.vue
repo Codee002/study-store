@@ -59,6 +59,9 @@
                 <button class="btn btn-buy" type="button" :disabled="!canPurchaseProduct" @click="openPurchaseModal(product, 'buy-now')">
                   Đặt hàng ngay
                 </button>
+                <button class="btn btn-secondary fw-bold" type="button" @click="contactAdminAboutProduct" :disabled="contactingAdmin">
+                  {{ contactingAdmin ? "Đang gửi..." : "Nhắn tin tư vấn" }}
+                </button>
               </div>
             </div>
           </div>
@@ -145,6 +148,7 @@ import ProductCard from "@/components/home/ProductCard.vue";
 import ProductPurchaseModal from "@/components/product/ProductPurchaseModal.vue";
 import cartService from "@/services/cart.service";
 import checkoutService from "@/services/checkout.service";
+import MessageService from "@/services/message.service";
 import ProductService from "@/services/product.service";
 import { useCustomerHeaderState } from "@/composables/useCustomerHeaderState";
 import { getRetailRow, getUserTierRow } from "@/utils/pricing";
@@ -165,6 +169,7 @@ const activeImageIndex = ref(0);
 const showPurchaseModal = ref(false);
 const selectedProduct = ref(null);
 const purchaseAction = ref("cart");
+const contactingAdmin = ref(false);
 
 const user = computed(() => headerStore.state.user || headerStore.defaultUser);
 
@@ -318,6 +323,46 @@ async function handleConfirmPurchase(payload) {
       e?.response?.data?.error ||
       (purchaseAction.value === "buy-now" ? "Đặt hàng thất bại." : "Thêm vào giỏ hàng thất bại.");
     await Swal.fire("Lỗi", msg, "error");
+  }
+}
+
+async function contactAdminAboutProduct() {
+  if (!product.value?.id || contactingAdmin.value) return;
+
+  contactingAdmin.value = true;
+  try {
+    const res = await MessageService.ensureConversation();
+    const conversationId = res?.conversation?.id;
+    if (!conversationId) {
+      throw new Error("Không thể mở cuộc trò chuyện với admin.");
+    }
+
+    await MessageService.sendMessage(conversationId, {
+      content: "Mình muốn tư vấn về sản phẩm này.",
+      files: [],
+      productIds: [product.value.id],
+    });
+
+    await Swal.fire({
+      icon: "success",
+      title: "Đã gửi",
+      text: "Thông tin sản phẩm đã được gửi tới cuộc trò chuyện với admin.",
+      timer: 1600,
+      showConfirmButton: false,
+    });
+
+    await router.push({ name: "contact.chat", params: { id: conversationId } });
+  } catch (e) {
+    await Swal.fire({
+      icon: "error",
+      title: "Lỗi",
+      text:
+        e?.response?.data?.message ||
+        e?.message ||
+        "Không thể gửi thông tin sản phẩm tới cuộc trò chuyện với admin.",
+    });
+  } finally {
+    contactingAdmin.value = false;
   }
 }
 
