@@ -9,16 +9,25 @@ class MessageService {
     return (await this.api.post("/start")).data;
   }
 
+  async ensureChatboxConversation() {
+    return (await this.api.post("/chatbox/start")).data;
+  }
+
+  async fetchInbox() {
+    return (await this.api.get("/inbox")).data;
+  }
+
   async fetchMessages(conversationId) {
     return (await this.api.get(`/${conversationId}`)).data;
   }
 
-  async sendMessage(conversationId, { content, files }) {
+  async sendMessage(conversationId, { content, files, productIds }) {
     const fd = new FormData();
     if (content) {
       fd.append("content", content);
     }
     (files || []).forEach((file) => fd.append("files[]", file));
+    (productIds || []).forEach((productId) => fd.append("product_ids[]", productId));
 
     return (
       await this.api.post(`/${conversationId}/send`, fd, {
