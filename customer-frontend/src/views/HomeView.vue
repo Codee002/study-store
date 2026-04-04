@@ -15,7 +15,7 @@
 
       <section class="container py-4">
         <div class="d-flex justify-content-between align-items-center mb-3">
-          <h5 class="mb-0">Sản phẩm gợi ý cho bạn</h5>
+          <h5 class="mb-0 fw-bold mb-1">Sản phẩm gợi ý</h5>
           <button class="btn btn-outline-secondary btn-sm" @click="loadMoreRecommendations">
             Tải thêm
           </button>
@@ -55,6 +55,7 @@ import Swal from "sweetalert2";
 import AppFooter from "@/components/layout/AppFooter.vue";
 import HeroBanner from "@/components/home/HeroBanner.vue";
 import FeaturedProducts from "@/components/home/FeaturedProducts.vue";
+import ProductCard from "@/components/home/ProductCard.vue";
 import ProductPurchaseModal from "@/components/product/ProductPurchaseModal.vue";
 import cartService from "@/services/cart.service";
 import checkoutService from "@/services/checkout.service";
@@ -77,8 +78,12 @@ const selectedProduct = ref(null);
 const purchaseAction = ref("cart");
 
 function mapToHomeCard(p, currentUser) {
-  const userRow = getUserTierRow(p?.prices, currentUser);
-  const retailRow = getRetailRow(p?.prices, currentUser);
+  const prices = Array.isArray(p?.prices) ? p.prices : [];
+  const images = Array.isArray(p?.images) ? p.images : [];
+  const colors = Array.isArray(p?.colors) ? p.colors : [];
+  const colorStocks = Array.isArray(p?.color_stocks) ? p.color_stocks : [];
+  const userRow = getUserTierRow(prices, currentUser);
+  const retailRow = getRetailRow(prices, currentUser);
 
   const retailPrice = retailRow ? Number(retailRow.price) : null;
   const userTierPrice = userRow ? Number(userRow.price) : null;
@@ -86,11 +91,11 @@ function mapToHomeCard(p, currentUser) {
   const price = userTierPrice != null ? userTierPrice : retailPrice != null ? retailPrice : 0;
   const oldPrice =
     userTierPrice != null && retailPrice != null && userTierPrice !== retailPrice ? retailPrice : null;
-  const categoryName = p?.category?.name || p?.category_name || "Kh?c";
+  const categoryName = p?.category?.name || p?.category_name || p?.category || "Khác";
 
   return {
     id: p.id,
-    name: p.name,
+    name: p?.name || p?.title || "",
     category_id: Number(p?.category?.id || p?.category_id || 0),
     category: categoryName,
     price,
@@ -98,11 +103,11 @@ function mapToHomeCard(p, currentUser) {
     rating: Number(p?.rating ?? 0),
     sold: Number(p?.sold ?? 0),
     badge: p?.badge ?? "",
-    image: p?.images?.[0]?.url || p?.image || "",
-    images: p?.images || [],
-    colors: p?.colors || [],
-    color_stocks: p?.color_stocks || [],
-    prices: p?.prices || [],
+    image: images?.[0]?.url || p?.image || "",
+    images,
+    colors,
+    color_stocks: colorStocks,
+    prices,
     stock_quantity: Number(p?.stock_quantity || 0),
     unit: p?.unit || "",
   };
@@ -172,15 +177,9 @@ async function fetchHomeProducts() {
   try {
     const res = await ProductService.getHomeProducts({ per_page: 8, page: 1, status: "actived" });
     const items = Array.isArray(res?.items) ? res.items : [];
-
-    const activeItems = items.filter((p) => {
-      if (p?.status != null) return String(p.status) === "active";
-      if (p?.active != null) return Number(p.active) === 1;
-      return true;
-    });
-
-    products.value = activeItems.slice(0, 8).map((p) => mapToHomeCard(p, user.value));
-  } catch {
+    products.value = items.slice(0, 8).map((p) => mapToHomeCard(p, user.value));
+  } catch (error) {
+    console.error("[HOME] fetchHomeProducts failed", error);
     products.value = [];
   }
 }
@@ -194,6 +193,7 @@ async function fetchRecommendations(refresh = false) {
       refresh: refresh ? 1 : undefined,
     });
     const items = res?.data?.items ?? res?.items ?? [];
+    console.log("[HOME] recommendations response", { recentIds, itemCount: items.length, items, res });
     recommendedAll.value = items.map((p) => mapToHomeCard(p, user.value)).slice(0, 24);
     // fallback: nếu rỗng, dùng sản phẩm nổi bật hiện có
     if (!recommendedAll.value.length && products.value.length) {
@@ -201,7 +201,8 @@ async function fetchRecommendations(refresh = false) {
     }
     recCursor.value = 0;
     recommendedVisible.value = recommendedAll.value.slice(0, 8);
-  } catch {
+  } catch (error) {
+    console.error("[HOME] fetchRecommendations failed", error);
     recommendedAll.value = [];
     recommendedVisible.value = [];
   }
@@ -210,6 +211,6 @@ async function fetchRecommendations(refresh = false) {
 onMounted(async () => {
   await headerStore.initHeaderState();
   await fetchHomeProducts();
-  await fetchRecommendations();
+  await fetchRecommendations(true);
 });
 </script>

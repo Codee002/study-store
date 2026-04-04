@@ -3,8 +3,7 @@ import LoginView from "@/views/auth/LoginView.vue";
 import RegisterView from "@/views/auth/RegisterView.vue";
 import ProductsView from "@/views/ProductsView.vue";
 import AccountSettingsView from "@/views/account/AccountSettingsView.vue";
-import ContactListView from "@/views/messages/ContactListView.vue";
-import ContactChatView from "@/views/messages/ContactChatView.vue";
+import InboxChatView from "@/views/messages/InboxChatView.vue";
 import AuthService from "@/services/auth.service";
 
 const routes = [
@@ -12,13 +11,13 @@ const routes = [
     path: "/login",
     name: "login",
     component: LoginView,
-    meta: { title: "Đăng nhập" },
+    meta: { title: "Đăng nhập", hideHeader: true },
   },
   {
     path: "/register",
     name: "register",
     component: RegisterView,
-    meta: { title: "Đăng ký" },
+    meta: { title: "Đăng ký", hideHeader: true },
   },
   {
     path: "/home",
@@ -76,13 +75,13 @@ const routes = [
   {
     path: "/contact",
     name: "contact.list",
-    component: ContactListView,
+    component: InboxChatView,
     meta: { title: "Liên hệ", requeresAuth: true },
   },
   {
     path: "/contact/:id",
     name: "contact.chat",
-    component: ContactChatView,
+    component: InboxChatView,
     meta: { title: "Trò chuyện", requeresAuth: true },
     props: true,
   },

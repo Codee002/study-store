@@ -40,6 +40,7 @@ const state = reactive({
   listenersBound: false,
   subscribedChannel: null,
   subscribedUserId: null,
+  forceLoggingOut: false,
 });
 
 function readStoredUser() {
@@ -92,9 +93,39 @@ async function loadMe(force = false) {
   try {
     const res = await authService.me();
     syncUserState(normalizeUserPayload(res));
-  } catch {
+  } catch (error) {
+    const status = Number(error?.response?.status || 0);
+    if ((status === 401 || status === 423) && authService.isLoggin()) {
+      await forceLogoutWithAlert(
+        status === 423
+          ? "Tài khoản của bạn đã bị khóa. Vui lòng liên hệ quản trị viên."
+          : "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.",
+      );
+      return;
+    }
     state.userLoaded = true;
   }
+}
+
+async function forceLogoutWithAlert(message) {
+  if (state.forceLoggingOut) return;
+
+  state.forceLoggingOut = true;
+  try {
+    await authService.logout();
+  } catch {
+    // ignore
+  }
+
+  resetHeaderState();
+  await Swal.fire({
+    icon: "warning",
+    title: "Thông báo",
+    text: message,
+    confirmButtonText: "Đồng ý",
+  });
+  await router.push({ name: "login" });
+  state.forceLoggingOut = false;
 }
 
 function mapMessage(raw, meId) {
@@ -104,6 +135,25 @@ function mapMessage(raw, meId) {
     text: raw.content,
     type: raw.type,
     created_at: raw.created_at,
+  };
+}
+
+function buildMessagePreview(type, content, fallback = "Tin nhan moi") {
+  if (type === "media") return "Da gui phuong tien";
+  if (type === "recalled") return "Tin nhan da bi thu hoi";
+  return content || fallback;
+}
+
+function mapInboxConversation(item) {
+  const partnerName = item?.partner?.name || item?.name || "Tin nhan";
+  return {
+    id: item.id,
+    conversation_id: item.id,
+    kind: item.kind || null,
+    fromName: partnerName,
+    preview: item.last_message || "Tin nhan moi",
+    created_at: item.updated_at || null,
+    unread: Number(item.unread || 0) > 0,
   };
 }
 
@@ -127,26 +177,22 @@ async function fetchMessages(force = false) {
 
   state.msgLoading = true;
   try {
-    const res = await MessageService.ensureConversation();
-    const convId = res?.conversation?.id;
-    const meId = res?.conversation?.user?.id || state.user?.id;
-    if (!convId) {
+    const inbox = await MessageService.fetchInbox();
+    const conversations = Array.isArray(inbox?.conversations) ? inbox.conversations : [];
+    if (!conversations.length) {
       state.messages = [];
       state.unreadMessages = 0;
       state.messagesLoaded = true;
       return;
     }
 
-    const msgs = await MessageService.fetchMessages(convId);
-    const mapped = (msgs?.messages || []).map((m) => mapMessage(m, meId));
-    state.messages = mapped.slice(-5).reverse().map((m) => ({
-      ...m,
-      unread: m.sender === "them" && isNewMessage(m.created_at),
-      preview: m.type === "media" ? "Da gui phuong tien" : m.text || "Tin nhan moi",
-      fromName: res?.conversation?.admin?.name || "Admin",
-      conversation_id: convId,
-    }));
-    state.unreadMessages = state.messages.filter((m) => m.unread).length;
+    const mapped = conversations
+      .map(mapInboxConversation)
+      .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))
+      .slice(0, 5);
+
+    state.messages = mapped;
+    state.unreadMessages = mapped.filter((m) => m.unread && isNewMessage(m.created_at)).length;
     state.messagesLoaded = true;
     syncMessageCache();
   } catch {
@@ -258,8 +304,14 @@ function pushNotification(payload, shouldToast = false) {
 function refreshEchoAuthHeader() {
   try {
     const token = localStorage.getItem("access_token") || "";
+    if (typeof window?.__resetCustomerEcho === "function") {
+      window.__resetCustomerEcho(token);
+      return;
+    }
+
     if (window.Echo?.connector?.pusher?.config?.auth) {
       window.Echo.connector.pusher.config.auth.headers = {
+        Accept: "application/json",
         Authorization: `Bearer ${token}`,
       };
     }
@@ -297,6 +349,13 @@ function subscribeRealtime() {
 
   channel.listen(".NotificationPushed", (e) => {
     const n = e?.notification || e;
+    if (n?.type === "account-locked") {
+      forceLogoutWithAlert(
+        n?.content || "Tài khoản của bạn đã bị khóa. Vui lòng liên hệ quản trị viên.",
+      );
+      return;
+    }
+
     pushNotification({
       ...n,
       is_read: false,
@@ -320,18 +379,30 @@ function subscribeRealtime() {
       return;
     }
 
-    const preview =
-      payload.type === "media" ? "Da gui phuong tien" : payload.content || "Tin nhan moi";
+    const conversationId = payload.conversation_id;
+    const idx = state.messages.findIndex((item) => String(item.conversation_id) === String(conversationId));
+    const preview = buildMessagePreview(payload.type, payload.content);
+    const existing = idx !== -1 ? state.messages[idx] : null;
     const entry = {
-      id: payload.id,
-      conversation_id: payload.conversation_id,
-      fromName: "Admin",
+      id: existing?.id || conversationId,
+      conversation_id: conversationId,
+      kind: existing?.kind || null,
+      fromName: existing?.fromName || "Tin nhan",
       preview,
       created_at: payload.created_at || new Date().toISOString(),
       unread: true,
     };
-    state.messages = [entry, ...state.messages].slice(0, 5);
-    state.unreadMessages += 1;
+
+    if (idx !== -1) {
+      state.messages.splice(idx, 1, entry);
+    } else {
+      state.messages.unshift(entry);
+    }
+
+    state.messages = [...state.messages]
+      .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))
+      .slice(0, 5);
+    state.unreadMessages = state.messages.filter((m) => m.unread && isNewMessage(m.created_at)).length;
     state.messagesLoaded = true;
     syncMessageCache();
   });
@@ -425,6 +496,7 @@ function resetHeaderState() {
   state.msgLoading = false;
   state.markingAll = false;
   state.bootstrapPromise = null;
+  state.forceLoggingOut = false;
 }
 
 export function useCustomerHeaderState() {

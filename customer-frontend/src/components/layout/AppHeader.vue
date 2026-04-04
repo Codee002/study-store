@@ -70,13 +70,13 @@
                 @click="goChat(m)"
               >
                 <span class="dot" :class="{ unread: m.unread }"></span>
-                <div class="flex-grow-1">
-                  <div class="fw-semibold d-flex align-items-center gap-2">
-                    {{ m.fromName || 'Tin nhắn' }}
+                <div class="flex-grow-1 notif-copy">
+                  <div class="fw-semibold d-flex align-items-center gap-2 notif-title">
+                    <span class="text-truncate">{{ m.fromName || 'Tin nhắn' }}</span>
                     <span v-if="m.unread" class="badge bg-danger-subtle text-danger rounded-pill">Mới</span>
                   </div>
-                  <div class="small text-muted text-truncate">
-                    {{ m.preview || 'Tin nhắn mới' }}
+                  <div class="small text-muted notif-preview">
+                    {{ truncateMessage(m.preview || 'Tin nhắn mới') }}
                   </div>
                 </div>
                 <div class="small text-muted">{{ formatTime(m.created_at) }}</div>
@@ -213,7 +213,6 @@ const props = defineProps({
   },
 });
 
-const emit = defineEmits(["search"]);
 const keyword = ref("");
 const isNotificationOpen = ref(false);
 const isMessageOpen = ref(false);
@@ -268,7 +267,11 @@ const hasNotifications = computed(() =>
 );
 
 function emitSearch() {
-  emit("search", keyword.value);
+  const q = keyword.value.trim();
+  router.push({
+    name: "products",
+    query: q ? { q } : {},
+  });
 }
 
 function goAccountSettings() {
@@ -290,6 +293,7 @@ async function onLogout() {
     if (item.type === "order" && item.url_id) return `/orders/${item.url_id}`;
     if (item.type === "evaluate" && item.url_id) return `/orders/${item.url_id}`;
     if (item.type === "evaluate-reply" && item.url_id) return `/orders/${item.url_id}`;
+    if (item.type === "account-locked") return null;
     if (item.type === "price-quotation" && item.url_id) {
       return `/price-quotation?ref=${item.url_id}`;
     }
@@ -341,6 +345,7 @@ function handleClickOutside(event) {
     if (item.type === "order") return "Cập nhật đơn hàng";
     if (item.type === "evaluate") return "Đánh giá mới";
     if (item.type === "evaluate-reply") return "Phản hồi đánh giá";
+    if (item.type === "account-locked") return "Tài khoản bị khóa";
     if (item.type === "price-quotation") return "Cập nhật báo giá";
     return "Thông báo";
   }
@@ -349,6 +354,13 @@ function formatTime(t) {
   if (!t) return "--:--";
   const d = dayjs(t);
   return d.isValid() ? d.format("HH:mm") : "--:--";
+}
+
+function truncateMessage(value, max = 60) {
+  const text = String(value || "").trim();
+  if (!text) return "Tin nhắn mới";
+  if (text.length <= max) return text;
+  return `${text.slice(0, max).trimEnd()}...`;
 }
 
 function formatRelative(dateStr) {
@@ -405,6 +417,7 @@ async function openNotification(item) {
 onMounted(() => {
   headerStore.initHeaderState();
   window.addEventListener("click", handleClickOutside);
+  keyword.value = String(route.query.q || "");
 });
 
 onBeforeUnmount(() => {
@@ -415,6 +428,7 @@ watch(
   () => route.fullPath,
   () => {
     headerStore.ensureHeaderSession();
+    keyword.value = String(route.query.q || "");
     if (route.name === "contact.chat") {
       headerStore.markMessagesSeen();
     }
@@ -560,6 +574,21 @@ watch(
 
 .notif-item:last-child {
   border-bottom: none;
+}
+
+.notif-copy {
+  min-width: 0;
+}
+
+.notif-title {
+  min-width: 0;
+}
+
+.notif-preview {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 .notif-group + .notif-group {

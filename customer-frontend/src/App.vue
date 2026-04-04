@@ -1,8 +1,11 @@
 <script setup>
-import { ref, onMounted } from "vue";
+import { computed, ref, onMounted } from "vue";
+import { useRoute } from "vue-router";
 import AppHeader from "@/components/layout/AppHeader.vue";
 
 const cartCount = ref(0);
+const route = useRoute();
+const showHeader = computed(() => !route.meta?.hideHeader);
 
 onMounted(() => {
   // cart count is fetched inside AppHeader; keep ref for prop compatibility
@@ -10,7 +13,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <AppHeader :cart-count="cartCount" />
+  <AppHeader v-if="showHeader" :cart-count="cartCount" />
   <router-view />
 </template>
 
