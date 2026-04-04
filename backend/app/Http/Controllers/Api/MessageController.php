@@ -5,12 +5,16 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Events\MessageReadUpdated;
 use App\Events\MessageSent;
+use App\Jobs\GenerateChatboxReplyJob;
 use App\Models\Conversation;
 use App\Models\Message;
 use App\Models\MessageMedia;
+use App\Models\MessageProduct;
 use App\Models\MessageRead;
 use App\Models\User;
+use App\Services\ChatboxService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -27,11 +31,7 @@ class MessageController extends Controller
             ], 403);
         }
 
-        $admin = User::query()
-            ->where('role', 'admin')
-            ->where('status', 'actived')
-            ->orderBy('id')
-            ->first();
+        $admin = $this->resolveActiveAdmin();
 
         if (! $admin) {
             return response()->json([
@@ -40,38 +40,69 @@ class MessageController extends Controller
             ], 404);
         }
 
-        $conversation = Conversation::query()
-            ->where('type', 'private')
-            ->whereHas('users', fn ($q) => $q->where('users.id', $user->id))
-            ->whereHas('users', fn ($q) => $q->where('users.id', $admin->id))
-            ->first();
-
-        if (! $conversation) {
-            DB::transaction(function () use (&$conversation, $user, $admin) {
-                $conversation = Conversation::query()->create([
-                    'type' => 'private',
-                    'name' => null,
-                ]);
-
-                $conversation->users()->attach([$user->id, $admin->id]);
-            });
-        }
-
-        $admin->load('profile');
+        $conversation = $this->findOrCreatePrivateConversation($user, $admin);
 
         return response()->json([
             'success' => true,
-            'conversation' => [
-                'id' => $conversation->id,
-                'type' => $conversation->type,
-                'name' => $conversation->name,
-                'thumb' => $conversation->thumb,
-                'admin' => [
-                    'id' => $admin->id,
-                    'name' => $admin->profile->name ?? $admin->username,
-                    'avatar' => $admin->profile->avatar,
-                ],
-            ],
+            'conversation' => $this->buildConversationPayload($conversation, $user),
+        ]);
+    }
+
+    public function ensureChatboxConversation(Request $request, ChatboxService $chatbox)
+    {
+        $user = $request->user();
+
+        if ($user->role !== 'user') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Chỉ khách hàng mới sử dụng được trợ lý AI.',
+            ], 403);
+        }
+
+        $conversation = $chatbox->ensureConversationForUser($user);
+
+        return response()->json([
+            'success' => true,
+            'conversation' => $chatbox->buildConversationPayload($conversation, $user),
+        ]);
+    }
+
+    public function customerInbox(Request $request, ChatboxService $chatbox)
+    {
+        $user = $request->user();
+
+        if ($user->role !== 'user') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Chỉ khách hàng mới sử dụng được hộp thư này.',
+            ], 403);
+        }
+
+        $items = [];
+
+        $admin = $this->resolveActiveAdmin();
+        if ($admin) {
+            $conversation = $this->findOrCreatePrivateConversation($user, $admin);
+            $items[] = $this->buildInboxItem($conversation, $user);
+        }
+
+        $chatboxConversation = $chatbox->ensureConversationForUser($user);
+        $items[] = $this->buildInboxItem($chatboxConversation, $user);
+
+        usort($items, function (array $a, array $b) {
+            $aTime = strtotime((string) ($a['updated_at'] ?? '')) ?: 0;
+            $bTime = strtotime((string) ($b['updated_at'] ?? '')) ?: 0;
+
+            if ($aTime === $bTime) {
+                return strcmp((string) ($a['kind'] ?? ''), (string) ($b['kind'] ?? ''));
+            }
+
+            return $bTime <=> $aTime;
+        });
+
+        return response()->json([
+            'success' => true,
+            'conversations' => $items,
         ]);
     }
 
@@ -110,21 +141,9 @@ class MessageController extends Controller
             });
         }
 
-        $customer->load('profile');
-
         return response()->json([
             'success' => true,
-            'conversation' => [
-                'id' => $conversation->id,
-                'type' => $conversation->type,
-                'name' => $conversation->name,
-                'thumb' => $conversation->thumb,
-                'user' => [
-                    'id' => $customer->id,
-                    'name' => $customer->profile->name ?? $customer->username,
-                    'avatar' => $customer->profile->avatar,
-                ],
-            ],
+            'conversation' => $this->buildConversationPayload($conversation, $admin),
         ]);
     }
 
@@ -216,7 +235,7 @@ class MessageController extends Controller
         }
 
         $messages = $conversation->messages()
-            ->with(['medias', 'reads'])
+            ->with(['medias', 'reads', 'suggestedProducts.product.images', 'suggestedProducts.product.category', 'suggestedProducts.product.prices', 'suggestedProducts.product.colors'])
             ->orderBy('created_at')
             ->get()
             ->map(function (Message $message) use ($user) {
@@ -237,6 +256,7 @@ class MessageController extends Controller
                             'type' => $media->type,
                         ];
                     })->values(),
+                    'products' => $this->mapSuggestedProducts($message),
                 ];
             });
 
@@ -267,6 +287,7 @@ class MessageController extends Controller
 
         return response()->json([
             'success' => true,
+            'conversation' => $this->buildConversationPayload($conversation, $user),
             'messages' => $messages,
         ]);
     }
@@ -285,11 +306,18 @@ class MessageController extends Controller
         $validated = $request->validate([
             'content' => ['nullable', 'string'],
             'files.*' => ['sometimes', 'file', 'max:10240'],
+            'product_ids' => ['sometimes', 'array'],
+            'product_ids.*' => ['integer', 'exists:products,id'],
         ]);
 
         $files = $request->file('files', []);
+        $productIds = collect($validated['product_ids'] ?? [])
+            ->map(fn ($id) => (int) $id)
+            ->filter()
+            ->unique()
+            ->values();
 
-        if (empty($validated['content']) && empty($files)) {
+        if (empty($validated['content']) && empty($files) && $productIds->isEmpty()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Nội dung tin nhắn trống.',
@@ -297,9 +325,9 @@ class MessageController extends Controller
         }
 
         $type = count($files) ? 'media' : 'text';
-        $message = null;
 
-        DB::transaction(function () use (&$message, $conversation, $user, $validated, $files, $type) {
+        /** @var Message $message */
+        $message = DB::transaction(function () use ($conversation, $user, $validated, $files, $type, $productIds) {
             $message = Message::query()->create([
                 'conversation_id' => $conversation->id,
                 'user_id' => $user->id,
@@ -329,11 +357,31 @@ class MessageController extends Controller
                     'type' => $mediaType,
                 ]);
             }
+
+            foreach ($productIds as $productId) {
+                MessageProduct::query()->create([
+                    'message_id' => $message->id,
+                    'product_id' => $productId,
+                ]);
+            }
+
+            return $message;
         });
 
-        $message->load(['medias', 'reads']);
+        $message->load([
+            'medias',
+            'reads',
+            'suggestedProducts.product.images',
+            'suggestedProducts.product.category',
+            'suggestedProducts.product.prices',
+            'suggestedProducts.product.colors',
+        ]);
 
         event(new MessageSent($message));
+
+        if ($conversation->type === 'chatbox' && $user->role === 'user') {
+            GenerateChatboxReplyJob::dispatchAfterResponse((int) $message->id);
+        }
 
         return response()->json([
             'success' => true,
@@ -353,6 +401,7 @@ class MessageController extends Controller
                         'type' => $media->type,
                     ];
                 })->values(),
+                'products' => $this->mapSuggestedProducts($message),
             ],
         ]);
     }
@@ -417,5 +466,147 @@ class MessageController extends Controller
         }
 
         return 'file';
+    }
+
+    private function resolveActiveAdmin(): ?User
+    {
+        return User::query()
+            ->with('profile')
+            ->where('role', 'admin')
+            ->where('status', 'actived')
+            ->orderBy('id')
+            ->first();
+    }
+
+    private function findOrCreatePrivateConversation(User $left, User $right): Conversation
+    {
+        $conversation = Conversation::query()
+            ->where('type', 'private')
+            ->whereHas('users', fn ($q) => $q->where('users.id', $left->id))
+            ->whereHas('users', fn ($q) => $q->where('users.id', $right->id))
+            ->first();
+
+        if ($conversation) {
+            return $conversation;
+        }
+
+        return DB::transaction(function () use ($left, $right) {
+            $conversation = Conversation::query()->create([
+                'type' => 'private',
+                'name' => null,
+            ]);
+
+            $conversation->users()->attach([$left->id, $right->id]);
+
+            return $conversation;
+        });
+    }
+
+    private function buildConversationPayload(Conversation $conversation, User $viewer): array
+    {
+        $conversation->loadMissing('users.profile');
+
+        if ($conversation->type === 'chatbox') {
+            $partner = $conversation->users->firstWhere('role', 'bot');
+
+            return [
+                'id' => $conversation->id,
+                'type' => $conversation->type,
+                'kind' => 'chatbox_advice',
+                'name' => $conversation->name ?: 'Trợ lý AI',
+                'thumb' => $conversation->thumb,
+                'bot' => [
+                    'id' => $partner?->id,
+                    'name' => $conversation->name ?: 'Trợ lý AI',
+                    'avatar' => null,
+                ],
+                'partner' => [
+                    'id' => $partner?->id,
+                    'name' => $conversation->name ?: 'Trợ lý AI',
+                    'avatar' => null,
+                    'role' => 'bot',
+                ],
+            ];
+        }
+
+        $partner = $conversation->users->firstWhere('id', '!=', $viewer->id);
+
+        $partnerPayload = [
+            'id' => $partner?->id,
+            'name' => $partner?->profile?->name ?? $partner?->username,
+            'avatar' => $partner?->profile?->avatar,
+            'role' => $partner?->role,
+        ];
+
+        $payload = [
+            'id' => $conversation->id,
+            'type' => $conversation->type,
+            'kind' => 'admin_support',
+            'name' => $conversation->name,
+            'thumb' => $conversation->thumb,
+            'partner' => $partnerPayload,
+        ];
+
+        if ($viewer->role === 'user') {
+            $payload['admin'] = Arr::except($partnerPayload, ['role']);
+        } else {
+            $payload['user'] = Arr::except($partnerPayload, ['role']);
+        }
+
+        return $payload;
+    }
+
+    private function buildInboxItem(Conversation $conversation, User $viewer): array
+    {
+        $conversation->loadMissing(['users.profile', 'messages' => fn ($q) => $q->latest()->limit(1)]);
+        $lastMessage = $conversation->messages->first();
+        $payload = $this->buildConversationPayload($conversation, $viewer);
+        $unread = Message::query()
+            ->where('conversation_id', $conversation->id)
+            ->where('user_id', '!=', $viewer->id)
+            ->whereDoesntHave('reads', fn ($q) => $q->where('user_id', $viewer->id))
+            ->count();
+
+        $preview = null;
+        if ($lastMessage) {
+            $preview = $lastMessage->type === 'media'
+                ? 'Đã gửi một tệp'
+                : ($lastMessage->type === 'recalled'
+                    ? 'Tin nhắn đã bị thu hồi'
+                    : $lastMessage->content);
+        }
+
+        return [
+            ...$payload,
+            'last_message' => $preview,
+            'updated_at' => optional($lastMessage?->created_at)?->toISOString(),
+            'unread' => $unread,
+        ];
+    }
+
+    private function mapSuggestedProducts(Message $message): array
+    {
+        return $message->suggestedProducts->map(function (MessageProduct $link) {
+            $product = $link->product;
+            if (! $product) {
+                return null;
+            }
+
+            $price = $product->prices->min('price');
+
+            return [
+                'id' => (int) $product->id,
+                'name' => (string) $product->name,
+                'category' => (string) ($product->category?->name ?? 'Khác'),
+                'image' => (string) ($product->images->first()?->url ?? ''),
+                'price' => $price !== null ? (float) $price : null,
+                'url' => '/products/' . (int) $product->id,
+                'unit' => (string) ($product->unit ?? ''),
+                'colors' => $product->colors->map(fn ($color) => [
+                    'id' => (int) $color->id,
+                    'color_name' => (string) ($color->color_name ?? 'Mặc định'),
+                ])->values()->all(),
+            ];
+        })->filter()->values()->all();
     }
 }

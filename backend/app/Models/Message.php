@@ -7,7 +7,6 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
-use Illuminate\Database\Eloquent\Relations\HasManyThrough;
 
 class Message extends Model
 {
@@ -39,5 +38,10 @@ class Message extends Model
     public function reads(): HasMany
     {
         return $this->hasMany(MessageRead::class);
+    }
+
+    public function suggestedProducts(): HasMany
+    {
+        return $this->hasMany(MessageProduct::class);
     }
 }

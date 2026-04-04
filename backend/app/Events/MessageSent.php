@@ -3,6 +3,7 @@
 namespace App\Events;
 
 use App\Models\Message;
+use App\Models\MessageProduct;
 use Illuminate\Broadcasting\PrivateChannel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
 use Illuminate\Foundation\Events\Dispatchable;
@@ -19,6 +20,10 @@ class MessageSent implements ShouldBroadcastNow
         // Load what the frontend needs for realtime updates
         $this->message = $message->loadMissing([
             'medias',
+            'suggestedProducts.product.images',
+            'suggestedProducts.product.category',
+            'suggestedProducts.product.prices',
+            'suggestedProducts.product.colors',
             'conversation.users',
         ]);
     }
@@ -52,6 +57,28 @@ class MessageSent implements ShouldBroadcastNow
                     'name' => $media->name,
                     'url'  => $media->url,
                     'type' => $media->type,
+                ];
+            })->values(),
+            'products'       => $this->message->suggestedProducts->map(function (MessageProduct $link) {
+                $product = $link->product;
+                if (! $product) {
+                    return null;
+                }
+
+                $price = $product->prices->min('price');
+
+                return [
+                    'id' => (int) $product->id,
+                    'name' => (string) $product->name,
+                    'category' => (string) ($product->category?->name ?? 'Khác'),
+                    'image' => (string) ($product->images->first()?->url ?? ''),
+                    'price' => $price !== null ? (float) $price : null,
+                    'url' => '/products/' . (int) $product->id,
+                    'unit' => (string) ($product->unit ?? ''),
+                    'colors' => $product->colors->map(fn ($color) => [
+                        'id' => (int) $color->id,
+                        'color_name' => (string) ($color->color_name ?? 'Mặc định'),
+                    ])->values()->all(),
                 ];
             })->values(),
         ];
