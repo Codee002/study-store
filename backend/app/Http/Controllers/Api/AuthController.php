@@ -175,6 +175,22 @@ class AuthController extends Controller
     public function me(Request $request)
     {
         $user = $request->user();
+        if (! $user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Chưa đăng nhập',
+            ], 401);
+        }
+
+        if ((string) ($user->status ?? '') !== 'actived') {
+            $user->currentAccessToken()?->delete();
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Tài khoản đã bị khóa',
+            ], 423);
+        }
+
         $user->load(['profile', 'tier']);
         $this->appendProfileMeta($user);
 

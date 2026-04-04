@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Tier;
 use App\Models\User;
+use App\Services\NotificationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
@@ -14,7 +15,7 @@ class UserController extends Controller
     {
         $user = $request->user();
         if (! $user || (string) ($user->role ?? '') !== 'admin') {
-            abort(403, 'Khong co quyen truy cap');
+            abort(403, 'Không có quyền truy cập');
         }
     }
 
@@ -112,7 +113,7 @@ class UserController extends Controller
             if (! $user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Khong tim thay tai khoan',
+                    'message' => 'Không tìm thấy tài khoản',
                 ], 404);
             }
 
@@ -233,7 +234,7 @@ class UserController extends Controller
         }
     }
 
-    public function updateStatus(Request $request, int $id)
+    public function updateStatus(Request $request, int $id, NotificationService $notificationService)
     {
         $this->ensureAdmin($request);
 
@@ -250,7 +251,12 @@ class UserController extends Controller
                 ], 404);
             }
 
+            $oldStatus = (string) ($user->status ?? '');
             $user->update(['status' => $validated['status']]);
+
+            if ((string) $validated['status'] === 'disabled') {
+                $user->tokens()->delete();
+            }
 
             $user->load([
                 'profile:id,user_id,name,phone,gender,birthday,avatar',
@@ -259,15 +265,19 @@ class UserController extends Controller
                 'deliveryInfos:id,user_id,name,phone,address,default',
             ]);
 
+            if ($oldStatus !== 'disabled' && (string) $validated['status'] === 'disabled') {
+                $notificationService->notifyAccountLocked($user);
+            }
+
             return response()->json([
                 'success' => true,
-                'message' => 'Cap nhat trang thai thanh cong',
+                'message' => 'Cập nhật trạng thái thành công',
                 'data'    => $this->transformUser($user, true),
             ], 200);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Cap nhat trang thai that bai',
+                'message' => 'Cập nhật trạng thái thất bại',
                 'error'   => $e->getMessage(),
             ], 500);
         }

@@ -131,6 +131,21 @@ class NotificationService
         ]);
     }
 
+    public function notifyAccountLocked(User $user): void
+    {
+        if ((int) ($user->id ?? 0) <= 0) {
+            return;
+        }
+
+        $this->createAndBroadcast([
+            'user_id' => (int) $user->id,
+            'type'    => 'account-locked',
+            'content' => 'Tài khoản của bạn đã bị khóa. Bạn sẽ được đăng xuất khỏi hệ thống.',
+            'url_id'  => (int) $user->id,
+            'status'  => 'unread',
+        ]);
+    }
+
     public function buildOrderStatusMessage(Order $order, string $oldStatus, string $newStatus): string
     {
         $oldLabel = $this->statusLabel($oldStatus);
