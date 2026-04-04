@@ -115,7 +115,9 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Messages (customer -> admin)
     Route::prefix('customer/messages')->name('customer.messages.')->group(function () {
+        Route::get('/inbox', [MessageController::class, 'customerInbox']);
         Route::post('/start', [MessageController::class, 'ensureCustomerConversation']);
+        Route::post('/chatbox/start', [MessageController::class, 'ensureChatboxConversation']);
         Route::get('/{conversation}', [MessageController::class, 'fetchMessages']);
         Route::post('/{conversation}/send', [MessageController::class, 'send']);
         Route::post('/{conversation}/messages/{message}/recall', [MessageController::class, 'recall']);
