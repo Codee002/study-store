@@ -596,11 +596,35 @@ class OrderController extends Controller
     public function myOrders(Request $request)
     {
         try {
-            $status        = strtolower((string) $request->query('status', 'all'));
-            $allowedStatus = ['pending', 'shipping', 'completed', 'cancelled', 'rejected'];
+            $userId          = (int) $request->user()->id;
+            $q               = trim((string) $request->query('q', ''));
+            $status          = strtolower((string) $request->query('status', 'all'));
+            $paymentId       = (int) $request->query('payment_id', 0);
+            $priceMin        = $request->query('price_min', null);
+            $priceMax        = $request->query('price_max', null);
+            $orderedFrom     = trim((string) $request->query('ordered_from', ''));
+            $orderedTo       = trim((string) $request->query('ordered_to', ''));
+            $sortBy          = strtolower(trim((string) $request->query('sort_by', 'created_at_desc')));
+            $perPage         = (int) $request->query('per_page', 10);
+            $page            = (int) $request->query('page', 1);
+            $perPage         = $perPage > 0 ? min($perPage, 50) : 10;
+            $allowedStatus   = ['pending', 'shipping', 'completed', 'cancelled', 'rejected'];
+            $allowedSortBy   = ['created_at_desc', 'created_at_asc', 'total_price_desc', 'total_price_asc'];
+            $normalizedPriceMin = is_numeric($priceMin) ? max(0, (float) $priceMin) : null;
+            $normalizedPriceMax = is_numeric($priceMax) ? max(0, (float) $priceMax) : null;
+
+            $detailTotals = DB::table('order_details')
+                ->selectRaw('order_id, SUM(quantity * price) as product_subtotal')
+                ->groupBy('order_id');
+
+            $discountTotals = DB::table('discount_orders')
+                ->selectRaw('order_id, SUM(price) as discount_total')
+                ->groupBy('order_id');
+
+            $computedTotalExpr = '(COALESCE(detail_totals.product_subtotal, 0) - COALESCE(discount_totals.discount_total, 0) + ' . self::SHIPPING_FEE . ')';
 
             $query = Order::query()
-                ->where('user_id', (int) $request->user()->id)
+                ->where('orders.user_id', $userId)
                 ->with([
                     'orderDetails.product.images',
                     'orderDetails.color',
@@ -608,21 +632,150 @@ class OrderController extends Controller
                     'deliveryInfo',
                     'payment',
                 ])
-                ->orderByDesc('created_at')
-                ->orderByDesc('id');
+                ->leftJoinSub($detailTotals, 'detail_totals', function ($join) {
+                    $join->on('detail_totals.order_id', '=', 'orders.id');
+                })
+                ->leftJoinSub($discountTotals, 'discount_totals', function ($join) {
+                    $join->on('discount_totals.order_id', '=', 'orders.id');
+                })
+                ->select('orders.*');
 
-            if (in_array($status, $allowedStatus, true)) {
-                $query->where('status', $status);
+            if ($q !== '') {
+                $query->where(function ($sub) use ($q) {
+                    $sub->where('orders.id', is_numeric($q) ? (int) $q : -1)
+                        ->orWhereHas('deliveryInfo', function ($dq) use ($q) {
+                            $dq->where('name', 'like', '%' . $q . '%')
+                                ->orWhere('phone', 'like', '%' . $q . '%');
+                        });
+                });
             }
 
-            $items = $query->get()->map(function (Order $order) {
+            if (in_array($status, $allowedStatus, true)) {
+                $query->where('orders.status', $status);
+            }
+
+            if ($paymentId > 0) {
+                $query->where('orders.payment_id', $paymentId);
+            }
+
+            if ($normalizedPriceMin !== null) {
+                $query->whereRaw($computedTotalExpr . ' >= ?', [$normalizedPriceMin]);
+            }
+
+            if ($normalizedPriceMax !== null) {
+                $query->whereRaw($computedTotalExpr . ' <= ?', [$normalizedPriceMax]);
+            }
+
+            if ($orderedFrom !== '') {
+                $query->whereDate('orders.created_at', '>=', $orderedFrom);
+            }
+
+            if ($orderedTo !== '') {
+                $query->whereDate('orders.created_at', '<=', $orderedTo);
+            }
+
+            if (! in_array($sortBy, $allowedSortBy, true)) {
+                $sortBy = 'created_at_desc';
+            }
+
+            if ($sortBy === 'created_at_asc') {
+                $query->orderBy('orders.created_at')->orderBy('orders.id');
+            } elseif ($sortBy === 'total_price_desc') {
+                $query->orderByRaw($computedTotalExpr . ' DESC')
+                    ->orderByDesc('orders.created_at')
+                    ->orderByDesc('orders.id');
+            } elseif ($sortBy === 'total_price_asc') {
+                $query->orderByRaw($computedTotalExpr . ' ASC')
+                    ->orderBy('orders.created_at')
+                    ->orderBy('orders.id');
+            } else {
+                $query->orderByDesc('orders.created_at')->orderByDesc('orders.id');
+            }
+
+            $statusSummaryQuery = Order::query()
+                ->where('orders.user_id', $userId)
+                ->leftJoinSub($detailTotals, 'detail_totals', function ($join) {
+                    $join->on('detail_totals.order_id', '=', 'orders.id');
+                })
+                ->leftJoinSub($discountTotals, 'discount_totals', function ($join) {
+                    $join->on('discount_totals.order_id', '=', 'orders.id');
+                });
+
+            if ($q !== '') {
+                $statusSummaryQuery->where(function ($sub) use ($q) {
+                    $sub->where('orders.id', is_numeric($q) ? (int) $q : -1)
+                        ->orWhereHas('deliveryInfo', function ($dq) use ($q) {
+                            $dq->where('name', 'like', '%' . $q . '%')
+                                ->orWhere('phone', 'like', '%' . $q . '%');
+                        });
+                });
+            }
+
+            if ($paymentId > 0) {
+                $statusSummaryQuery->where('orders.payment_id', $paymentId);
+            }
+
+            if ($normalizedPriceMin !== null) {
+                $statusSummaryQuery->whereRaw($computedTotalExpr . ' >= ?', [$normalizedPriceMin]);
+            }
+
+            if ($normalizedPriceMax !== null) {
+                $statusSummaryQuery->whereRaw($computedTotalExpr . ' <= ?', [$normalizedPriceMax]);
+            }
+
+            if ($orderedFrom !== '') {
+                $statusSummaryQuery->whereDate('orders.created_at', '>=', $orderedFrom);
+            }
+
+            if ($orderedTo !== '') {
+                $statusSummaryQuery->whereDate('orders.created_at', '<=', $orderedTo);
+            }
+
+            $statusSummary = $statusSummaryQuery
+                ->selectRaw('orders.status, COUNT(*) as aggregate')
+                ->groupBy('orders.status')
+                ->pluck('aggregate', 'status');
+
+            $payments = Payment::query()
+                ->where('status', 'actived')
+                ->orderBy('name')
+                ->get(['id', 'name'])
+                ->map(function (Payment $payment) {
+                    return [
+                        'id' => (int) $payment->id,
+                        'name' => (string) $payment->name,
+                    ];
+                })
+                ->values();
+
+            $paginator = $query->paginate($perPage, ['*'], 'page', $page);
+            $items = collect($paginator->items())->map(function (Order $order) {
                 return $this->buildOrderPayload($order);
             })->values();
 
             return response()->json([
                 'success' => true,
                 'message' => 'Lay danh sach don hang thanh cong',
-                'data'    => $items,
+                'data'    => [
+                    'items' => $items,
+                    'meta'  => [
+                        'current_page' => $paginator->currentPage(),
+                        'per_page'     => $paginator->perPage(),
+                        'total'        => $paginator->total(),
+                        'last_page'    => $paginator->lastPage(),
+                    ],
+                    'filters' => [
+                        'payments' => $payments,
+                    ],
+                    'status_summary' => [
+                        'all' => (int) $statusSummary->sum(),
+                        'pending' => (int) ($statusSummary['pending'] ?? 0),
+                        'shipping' => (int) ($statusSummary['shipping'] ?? 0),
+                        'completed' => (int) ($statusSummary['completed'] ?? 0),
+                        'cancelled' => (int) ($statusSummary['cancelled'] ?? 0),
+                        'rejected' => (int) ($statusSummary['rejected'] ?? 0),
+                    ],
+                ],
             ], 200);
         } catch (\Exception $e) {
             return response()->json([
@@ -1199,12 +1352,31 @@ class OrderController extends Controller
     public function adminOrders(Request $request)
     {
         try {
-            $q             = trim((string) $request->query('q', ''));
-            $status        = strtolower(trim((string) $request->query('status', 'all')));
-            $perPage       = (int) $request->query('per_page', 10);
-            $page          = (int) $request->query('page', 1);
-            $perPage       = $perPage > 0 ? min($perPage, 50) : 10;
-            $allowedStatus = ['pending', 'shipping', 'completed', 'cancelled', 'rejected'];
+            $q               = trim((string) $request->query('q', ''));
+            $status          = strtolower(trim((string) $request->query('status', 'all')));
+            $paymentId       = (int) $request->query('payment_id', 0);
+            $priceMin        = $request->query('price_min', null);
+            $priceMax        = $request->query('price_max', null);
+            $orderedFrom     = trim((string) $request->query('ordered_from', ''));
+            $orderedTo       = trim((string) $request->query('ordered_to', ''));
+            $sortBy          = strtolower(trim((string) $request->query('sort_by', 'created_at_desc')));
+            $perPage         = (int) $request->query('per_page', 10);
+            $page            = (int) $request->query('page', 1);
+            $perPage         = $perPage > 0 ? min($perPage, 50) : 10;
+            $allowedStatus   = ['pending', 'shipping', 'completed', 'cancelled', 'rejected'];
+            $allowedSortBy   = ['created_at_desc', 'created_at_asc', 'total_price_desc', 'total_price_asc'];
+            $normalizedPriceMin = is_numeric($priceMin) ? max(0, (float) $priceMin) : null;
+            $normalizedPriceMax = is_numeric($priceMax) ? max(0, (float) $priceMax) : null;
+
+            $detailTotals = DB::table('order_details')
+                ->selectRaw('order_id, SUM(quantity * price) as product_subtotal')
+                ->groupBy('order_id');
+
+            $discountTotals = DB::table('discount_orders')
+                ->selectRaw('order_id, SUM(price) as discount_total')
+                ->groupBy('order_id');
+
+            $computedTotalExpr = '(COALESCE(detail_totals.product_subtotal, 0) - COALESCE(discount_totals.discount_total, 0) + ' . self::SHIPPING_FEE . ')';
 
             $query = Order::query()
                 ->with([
@@ -1216,8 +1388,13 @@ class OrderController extends Controller
                     'deliveryInfo',
                     'payment',
                 ])
-                ->orderByDesc('created_at')
-                ->orderByDesc('id');
+                ->leftJoinSub($detailTotals, 'detail_totals', function ($join) {
+                    $join->on('detail_totals.order_id', '=', 'orders.id');
+                })
+                ->leftJoinSub($discountTotals, 'discount_totals', function ($join) {
+                    $join->on('discount_totals.order_id', '=', 'orders.id');
+                })
+                ->select('orders.*');
 
             if ($q !== '') {
                 $query->where(function ($sub) use ($q) {
@@ -1240,6 +1417,56 @@ class OrderController extends Controller
                 $query->where('status', $status);
             }
 
+            if ($paymentId > 0) {
+                $query->where('payment_id', $paymentId);
+            }
+
+            if ($normalizedPriceMin !== null) {
+                $query->whereRaw($computedTotalExpr . ' >= ?', [$normalizedPriceMin]);
+            }
+
+            if ($normalizedPriceMax !== null) {
+                $query->whereRaw($computedTotalExpr . ' <= ?', [$normalizedPriceMax]);
+            }
+
+            if ($orderedFrom !== '') {
+                $query->whereDate('created_at', '>=', $orderedFrom);
+            }
+
+            if ($orderedTo !== '') {
+                $query->whereDate('created_at', '<=', $orderedTo);
+            }
+
+            if (! in_array($sortBy, $allowedSortBy, true)) {
+                $sortBy = 'created_at_desc';
+            }
+
+            if ($sortBy === 'created_at_asc') {
+                $query->orderBy('created_at')->orderBy('id');
+            } elseif ($sortBy === 'total_price_desc') {
+                $query->orderByRaw($computedTotalExpr . ' DESC')
+                    ->orderByDesc('created_at')
+                    ->orderByDesc('id');
+            } elseif ($sortBy === 'total_price_asc') {
+                $query->orderByRaw($computedTotalExpr . ' ASC')
+                    ->orderBy('created_at')
+                    ->orderBy('id');
+            } else {
+                $query->orderByDesc('created_at')->orderByDesc('id');
+            }
+
+            $payments = Payment::query()
+                ->where('status', 'actived')
+                ->orderBy('name')
+                ->get(['id', 'name'])
+                ->map(function (Payment $payment) {
+                    return [
+                        'id' => (int) $payment->id,
+                        'name' => (string) $payment->name,
+                    ];
+                })
+                ->values();
+
             $paginator      = $query->paginate($perPage, ['*'], 'page', $page);
             $vnpayPaymentId = $this->resolveVNPayPaymentId();
             $items          = collect($paginator->items())
@@ -1259,12 +1486,15 @@ class OrderController extends Controller
                         'total'        => $paginator->total(),
                         'last_page'    => $paginator->lastPage(),
                     ],
+                    'filters' => [
+                        'payments' => $payments,
+                    ],
                 ],
             ], 200);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Lay danh sach don hang that bai',
+                'message' => 'Lấy danh sách đơn hàng thất bại',
                 'error'   => $e->getMessage(),
             ], 500);
         }
@@ -1277,7 +1507,7 @@ class OrderController extends Controller
             if ((string) ($admin->role ?? '') !== 'admin') {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Ban khong co quyen xem danh gia.',
+                    'message' => 'Bạn không có quyền xem đánh giá.',
                 ], 403);
             }
 
@@ -1288,7 +1518,7 @@ class OrderController extends Controller
                 ->with([
                     'product:id,name',
                     'product.images:id,product_id,url',
-                    'order:id',
+                    'order:id,user_id',
                     'order.user:id,username',
                     'order.user.profile:id,user_id,name,avatar',
                     'medias:id,evaluate_id,type,url',
@@ -1573,7 +1803,7 @@ class OrderController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Duyet don hang thanh cong',
+                'message' => 'Duyệt đơn hàng thành công',
                 'data'    => $this->buildAdminOrderPayload($order, true, $vnpayPaymentId),
             ], 200);
         } catch (ValidationException $e) {
