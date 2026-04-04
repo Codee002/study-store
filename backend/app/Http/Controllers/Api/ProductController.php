@@ -147,8 +147,19 @@ class ProductController extends Controller
             ->values()
             ->all();
         $refresh = $request->boolean('refresh', false);
-        $cacheKey = "recommend:{$userId}";
         $perPage = 24;
+        $cacheKey = 'recommend:' . md5(json_encode([
+            'user_id' => $userId,
+            'recent_ids' => $recentIds,
+            'per_page' => $perPage,
+        ]));
+
+        Log::info('[RECOMMEND] request', [
+            'user_id' => $userId,
+            'recent_ids' => $recentIds,
+            'refresh' => $refresh,
+            'cache_key' => $cacheKey,
+        ]);
 
         if ($refresh) {
             Cache::tags(['products', 'recommend'])->forget($cacheKey);
@@ -158,13 +169,35 @@ class ProductController extends Controller
             ->remember($cacheKey, 600, function () use ($ai, $userId, $perPage, $recentIds) {
                 try {
                     $results = $ai->recommendContent($userId, $perPage, $recentIds);
+                    Log::info('[RECOMMEND] ai results', [
+                        'user_id' => $userId,
+                        'recent_ids' => $recentIds,
+                        'count' => count($results),
+                        'items' => array_slice(array_map(function ($item) {
+                            return [
+                                'id' => $item['id'] ?? null,
+                                'title' => $item['title'] ?? null,
+                                'category' => $item['category'] ?? null,
+                                'score' => $item['score'] ?? null,
+                            ];
+                        }, $results), 0, 12),
+                    ]);
                 } catch (\Throwable $e) {
+                    Log::warning('[RECOMMEND] ai error', [
+                        'user_id' => $userId,
+                        'recent_ids' => $recentIds,
+                        'error' => $e->getMessage(),
+                    ]);
                     return [];
                 }
 
                 $idScores = collect($results)->pluck('score', 'id');
                 $ids = $idScores->keys()->all();
                 if (empty($ids)) {
+                    Log::info('[RECOMMEND] ai empty ids', [
+                        'user_id' => $userId,
+                        'recent_ids' => $recentIds,
+                    ]);
                     return [];
                 }
 
@@ -181,16 +214,41 @@ class ProductController extends Controller
                     ->orderByRaw('FIELD(id, ' . implode(',', array_map('intval', $ids)) . ')')
                     ->get();
 
+                Log::info('[RECOMMEND] db products after filter', [
+                    'requested_ids' => $ids,
+                    'count' => $products->count(),
+                    'items' => $products->map(function ($product) use ($idScores) {
+                        return [
+                            'id' => $product->id,
+                            'name' => $product->name,
+                            'score' => $idScores[$product->id] ?? null,
+                        ];
+                    })->values()->all(),
+                ]);
+
                 $collection = collect($products);
                 $this->appendColorStocksToProducts($collection, null);
                 $this->appendReviewSummaryToProducts($collection);
                 $this->appendSoldOrdersCountToProducts($collection);
 
-                return $collection->map(function ($p) use ($idScores) {
+                $mapped = $collection->map(function ($p) use ($idScores) {
                     $arr = $p->toArray();
                     $arr['score'] = $idScores[$p->id] ?? null;
                     return $arr;
                 })->values()->all();
+
+                Log::info('[RECOMMEND] final payload', [
+                    'count' => count($mapped),
+                    'items' => array_slice(array_map(function ($item) {
+                        return [
+                            'id' => $item['id'] ?? null,
+                            'name' => $item['name'] ?? null,
+                            'score' => $item['score'] ?? null,
+                        ];
+                    }, $mapped), 0, 12),
+                ]);
+
+                return $mapped;
             });
 
         return response()->json([
@@ -1079,7 +1137,27 @@ class ProductController extends Controller
                     ];
                 });
 
-            $product->setAttribute('color_stocks', $colorStocks->concat($extraColorStocks)->values()->all());
+            $noColorStocks = collect();
+            if ($colors->isEmpty()) {
+                $noColorStocks = $rowsForProduct
+                    ->whereNull('color_id')
+                    ->map(function ($row) use ($reservedForProduct) {
+                        $reservedQty = (int) ($reservedForProduct->get('null')->reserved_quantity ?? 0);
+                        $availableQty = max(0, (int) ($row->stock_quantity ?? 0) - $reservedQty);
+                        $availability = $this->buildAvailabilityPayload((int) ($row->active_row_count ?? 0), $availableQty);
+
+                        return [
+                            'color_id' => null,
+                            'color_name' => 'Mặc định',
+                            'stock_quantity' => $availableQty,
+                            'availability_status' => $availability['status'],
+                            'availability_message' => $availability['message'],
+                            'is_available' => $availability['is_available'],
+                        ];
+                    });
+            }
+
+            $product->setAttribute('color_stocks', $colorStocks->concat($extraColorStocks)->concat($noColorStocks)->values()->all());
         }
     }
 
@@ -1091,6 +1169,7 @@ class ProductController extends Controller
 
         foreach ($products as $product) {
             $colorStocks = collect($product->color_stocks ?? []);
+            $fallbackStockQuantity = (int) ($product->stock_quantity ?? 0);
             $hasActiveVariant = $colorStocks->contains(function ($color) {
                 return (string) ($color['availability_status'] ?? '') !== 'unavailable';
             });
@@ -1100,7 +1179,8 @@ class ProductController extends Controller
             $totalAvailableQuantity = (int) $colorStocks->sum(fn($color) => (int) ($color['stock_quantity'] ?? 0));
 
             if ($colorStocks->isEmpty()) {
-                $availability = $this->buildAvailabilityPayload(0, 0);
+                $availability = $this->buildAvailabilityPayload($fallbackStockQuantity > 0 ? 1 : 0, $fallbackStockQuantity);
+                $totalAvailableQuantity = $fallbackStockQuantity;
             } elseif ($hasSellableVariant) {
                 $availability = $this->buildAvailabilityPayload(1, $totalAvailableQuantity);
             } elseif ($hasActiveVariant) {
