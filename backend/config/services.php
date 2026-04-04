@@ -35,4 +35,13 @@ return [
         ],
     ],
 
+    'openai' => [
+        'api_key' => env('OPENAI_API_KEY'),
+        'base_url' => env('OPENAI_BASE_URL', 'https://api.openai.com/v1'),
+        'model' => env('OPENAI_CHAT_MODEL', 'gpt-5.1'),
+        'timeout' => (int) env('OPENAI_TIMEOUT', 45),
+        'chatbox_bot_username' => env('CHATBOX_BOT_USERNAME', 'ai_chatbox'),
+        'chatbox_bot_email' => env('CHATBOX_BOT_EMAIL', 'ai-chatbox@local.study-store'),
+    ],
+
 ];
