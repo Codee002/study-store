@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use Illuminate\Http\Client\Response;
+use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Throwable;
@@ -11,16 +12,29 @@ class AiSearchClient
 {
     protected string $base;
     protected ?string $key;
+    protected int $connectTimeout;
+    protected int $timeout;
+    protected int $ingestTimeout;
 
     public function __construct()
     {
         $this->base = rtrim(config('ai.endpoint'), '/');
         $this->key  = config('ai.api_key');
+        $this->connectTimeout = (int) config('ai.connect_timeout', 10);
+        $this->timeout = (int) config('ai.timeout', 180);
+        $this->ingestTimeout = (int) config('ai.ingest_timeout', 300);
     }
 
     protected function headers(): array
     {
         return $this->key ? ['Authorization' => "Bearer {$this->key}"] : [];
+    }
+
+    protected function request(?int $timeout = null): PendingRequest
+    {
+        return Http::withHeaders($this->headers())
+            ->connectTimeout($this->connectTimeout)
+            ->timeout($timeout ?? $this->timeout);
     }
 
     public function ingestProducts(array $products): void
@@ -29,7 +43,7 @@ class AiSearchClient
         $payload = ['products' => $products];
         try {
             /** @var Response $resp */
-            $resp = Http::withHeaders($this->headers())
+            $resp = $this->request($this->ingestTimeout)
                 ->post("{$this->base}/search/ingest/products", $payload);
         } catch (Throwable $e) {
             Log::error('[AI] ingest products failed (client)', [
@@ -54,7 +68,7 @@ class AiSearchClient
         $payload = ['ids' => $ids];
         try {
             /** @var Response $resp */
-            $resp = Http::withHeaders($this->headers())
+            $resp = $this->request()
                 ->post("{$this->base}/search/ingest/delete", $payload);
         } catch (Throwable $e) {
             Log::error('[AI] delete products failed (client)', [
@@ -84,7 +98,7 @@ class AiSearchClient
 
         try {
             /** @var Response $resp */
-            $resp = Http::withHeaders($this->headers())
+            $resp = $this->request()
                 ->post("{$this->base}/search/semantic", $payload);
         } catch (Throwable $e) {
             Log::error('[AI] semantic search failed (client)', [
@@ -129,7 +143,7 @@ class AiSearchClient
 
         try {
             /** @var Response $resp */
-            $resp = Http::withHeaders($this->headers())
+            $resp = $this->request()
                 ->post("{$this->base}/recommend/content", $payload);
         } catch (Throwable $e) {
             Log::error('[AI] recommend content failed (client)', [
@@ -168,7 +182,7 @@ class AiSearchClient
 
         try {
             /** @var Response $resp */
-            $resp = Http::withHeaders($this->headers())
+            $resp = $this->request()
                 ->post("{$this->base}/events", $payload);
 
             $resp->throw();
