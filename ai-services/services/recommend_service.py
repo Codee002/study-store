@@ -30,6 +30,70 @@ def log_event(event: Event):
 
 
 def recommend_content(req: RecommendRequest):
+    candidate_k = max(req.top_k * 4, 40)
+    content_results = _recommend_content_candidates(req, candidate_k)
+    cf_results = _recommend_cf_candidates(req, candidate_k)
+
+    if not content_results and not cf_results:
+        return {"results": []}
+
+    content_scores = _normalize_result_scores(content_results)
+    cf_scores = _normalize_result_scores(cf_results)
+    active_sources = int(bool(content_scores)) + int(bool(cf_scores))
+    divisor = active_sources if active_sources > 0 else 1
+
+    merged_ids = list(dict.fromkeys([*content_scores.keys(), *cf_scores.keys()]))
+    results = []
+    for pid in merged_ids:
+        meta = product_meta.get(pid, {})
+        if meta.get("status", "actived") != "actived":
+            continue
+
+        content_score = content_scores.get(pid, 0.0)
+        cf_score = cf_scores.get(pid, 0.0)
+        combined_score = (content_score + cf_score) / divisor
+
+        results.append(
+            {
+                "id": pid,
+                "title": meta.get("title"),
+                "category": meta.get("category"),
+                "price": meta.get("price"),
+                "image": meta.get("image"),
+                "score": float(combined_score),
+                "content_score": float(content_score),
+                "cf_score": float(cf_score),
+            }
+        )
+
+    results.sort(
+        key=lambda item: (
+            item.get("score", 0.0),
+            item.get("content_score", 0.0),
+            item.get("cf_score", 0.0),
+        ),
+        reverse=True,
+    )
+    return {"results": results[: req.top_k]}
+
+
+def recommend_cf(req: RecommendRequest):
+    results = _recommend_cf_candidates(req, req.top_k)
+    normalized_scores = _normalize_result_scores(results)
+    output = []
+    for item in results:
+        pid = item["id"]
+        meta = product_meta.get(pid, {})
+        if meta.get("status", "actived") != "actived":
+            continue
+        enriched = meta.copy()
+        enriched["id"] = pid
+        enriched["score"] = float(normalized_scores.get(pid, 0.0))
+        output.append(enriched)
+    return {"results": output[: req.top_k]}
+
+
+def _recommend_content_candidates(req: RecommendRequest, top_k: int):
     user_vec = build_user_vector(req.user_id)
     if user_vec is None and req.recent_product_ids:
         vecs = [product_vector(pid) for pid in req.recent_product_ids]
@@ -37,46 +101,54 @@ def recommend_content(req: RecommendRequest):
         if vecs:
             mat = np.vstack(vecs)
             user_vec = mat.mean(axis=0, keepdims=True)
-            _normalize(user_vec)
+            user_vec = _normalize(user_vec)
     if user_vec is None:
-        # Không có lịch sử và không có recent ids => trả rỗng thay vì 404
-        return {"results": []}
-    scores, ids = search(product_index, user_vec, req.top_k)
-    return _products_from_scores(scores, ids)
+        return []
+    scores, ids = search(product_index, user_vec, top_k)
+    return _products_from_scores(scores, ids)["results"]
 
 
-def recommend_cf(req: RecommendRequest):
+def _recommend_cf_candidates(req: RecommendRequest, top_k: int):
     uid = to_int_id(req.user_id)
     try:
         user_vec = reconstruct(user_index, uid)
     except RuntimeError as exc:
-        return {"results": []}
+        return []
     scores, neighbor_ids = search(user_index, np.expand_dims(user_vec, 0), 20)
     neighbor_user_ids = [nid for nid in neighbor_ids[0] if nid not in (-1, uid)]
     neighbor_products = []
     for nid in neighbor_user_ids:
-        # map back to string user ids
         uids = [e["user_id"] for e in events if to_int_id(e["user_id"]) == nid]
         if not uids:
             continue
         evs = [e for e in events if e["user_id"] == uids[0]]
         neighbor_products.extend(e["product_id"] for e in evs)
     if not neighbor_products:
-        return {"results": []}
+        return []
     freq = {}
     for pid in neighbor_products:
         freq[pid] = freq.get(pid, 0) + 1
-    ranked = sorted(freq.items(), key=lambda x: x[1], reverse=True)[: req.top_k]
+    ranked = sorted(
+        ((pid, _rebalance_signal(count)) for pid, count in freq.items()),
+        key=lambda x: x[1],
+        reverse=True,
+    )[: top_k]
     results = []
-    for pid, count in ranked:
+    for pid, score in ranked:
         meta = product_meta.get(pid, {})
         if meta.get("status", "actived") != "actived":
             continue
-        item = meta.copy()
-        item["id"] = pid
-        item["score"] = count
-        results.append(item)
-    return {"results": results}
+        results.append(
+            {
+                "id": pid,
+                "title": meta.get("title"),
+                "category": meta.get("category"),
+                "price": meta.get("price"),
+                "image": meta.get("image"),
+                "score": float(score),
+            }
+        )
+    return results
 
 
 # ---------- Helpers ----------
@@ -94,27 +166,32 @@ def build_user_vector(user_id: str):
     if not evs:
         return None
     weights = {"view": 1.0, "cart": 3.0, "purchase": 5.0}
+    product_weights: dict[str, float] = {}
+    for e in evs:
+        weight = weights.get(e.get("action", "view"), 1.0)
+        pid = str(e["product_id"])
+        product_weights[pid] = product_weights.get(pid, 0.0) + weight
+
     vecs = []
     wts = []
-    for e in evs:
-        v = product_vector(e["product_id"])
+    for pid, raw_weight in product_weights.items():
+        v = product_vector(pid)
         if v is None:
             continue
-        weight = weights.get(e.get("action", "view"), 1.0)
         vecs.append(v)
-        wts.append(weight)
+        wts.append(_rebalance_signal(raw_weight))
     if not vecs:
         return None
     mat = np.vstack(vecs)
     w = np.array(wts).reshape(-1, 1)
     user_vec = (mat * w).sum(axis=0, keepdims=True) / w.sum()
-    _normalize(user_vec)
-    return user_vec
+    return _normalize(user_vec)
 
 
 def upsert_user_vector(user_id: str, vector: np.ndarray) -> None:
     uid = to_int_id(user_id)
-    add_vectors(user_index, vector, np.array([uid], dtype=np.int64), USER_INDEX_PATH)
+    normalized_vector = _normalize(vector)
+    add_vectors(user_index, normalized_vector, np.array([uid], dtype=np.int64), USER_INDEX_PATH)
 
 
 def _products_from_scores(scores, ids):
@@ -139,7 +216,28 @@ def _products_from_scores(scores, ids):
     return {"results": results}
 
 
-def _normalize(vec: np.ndarray):
-    import faiss  # local import to avoid global dependency cycle
+def _normalize_result_scores(results: list[dict]) -> dict[str, float]:
+    if not results:
+        return {}
+    max_score = max(float(item.get("score", 0.0)) for item in results)
+    if max_score <= 0:
+        return {str(item["id"]): 0.0 for item in results if item.get("id")}
+    return {
+        str(item["id"]): float(item.get("score", 0.0)) / max_score
+        for item in results
+        if item.get("id")
+    }
 
-    faiss.normalize_L2(vec)
+
+def _rebalance_signal(raw_score: float) -> float:
+    if raw_score <= 0:
+        return 0.0
+    return float(np.log1p(raw_score))
+
+
+def _normalize(vec: np.ndarray):
+    import faiss  
+
+    normalized = np.ascontiguousarray(vec, dtype=np.float32)
+    faiss.normalize_L2(normalized)
+    return normalized
