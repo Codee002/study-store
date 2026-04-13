@@ -235,7 +235,7 @@ class MessageController extends Controller
         }
 
         $messages = $conversation->messages()
-            ->with(['medias', 'reads', 'suggestedProducts.product.images', 'suggestedProducts.product.category', 'suggestedProducts.product.prices', 'suggestedProducts.product.colors'])
+            ->with(['medias', 'reads', 'suggestedProducts.product.images', 'suggestedProducts.product.category', 'suggestedProducts.product.prices.tier', 'suggestedProducts.product.colors'])
             ->orderBy('created_at')
             ->get()
             ->map(function (Message $message) use ($user) {
@@ -256,7 +256,7 @@ class MessageController extends Controller
                             'type' => $media->type,
                         ];
                     })->values(),
-                    'products' => $this->mapSuggestedProducts($message),
+                    'products' => $this->mapSuggestedProducts($message, $user),
                 ];
             });
 
@@ -373,7 +373,7 @@ class MessageController extends Controller
             'reads',
             'suggestedProducts.product.images',
             'suggestedProducts.product.category',
-            'suggestedProducts.product.prices',
+            'suggestedProducts.product.prices.tier',
             'suggestedProducts.product.colors',
         ]);
 
@@ -401,7 +401,7 @@ class MessageController extends Controller
                         'type' => $media->type,
                     ];
                 })->values(),
-                'products' => $this->mapSuggestedProducts($message),
+                'products' => $this->mapSuggestedProducts($message, $user),
             ],
         ]);
     }
@@ -584,22 +584,25 @@ class MessageController extends Controller
         ];
     }
 
-    private function mapSuggestedProducts(Message $message): array
+    private function mapSuggestedProducts(Message $message, ?User $viewer = null): array
     {
-        return $message->suggestedProducts->map(function (MessageProduct $link) {
+        $tierId = $this->resolveEffectiveTierId($viewer);
+
+        return $message->suggestedProducts->map(function (MessageProduct $link) use ($tierId) {
             $product = $link->product;
             if (! $product) {
                 return null;
             }
 
-            $price = $product->prices->min('price');
+            $pricing = $this->resolveUnitPriceWithMinQty($product->prices, $tierId, 1);
+            $price = (float) ($pricing['unit_price'] ?? 0);
 
             return [
                 'id' => (int) $product->id,
                 'name' => (string) $product->name,
                 'category' => (string) ($product->category?->name ?? 'Khác'),
                 'image' => (string) ($product->images->first()?->url ?? ''),
-                'price' => $price !== null ? (float) $price : null,
+                'price' => $price > 0 ? $price : null,
                 'url' => '/products/' . (int) $product->id,
                 'unit' => (string) ($product->unit ?? ''),
                 'colors' => $product->colors->map(fn ($color) => [
@@ -608,5 +611,76 @@ class MessageController extends Controller
                 ])->values()->all(),
             ];
         })->filter()->values()->all();
+    }
+
+    private function resolveEffectiveTierId(?User $user): ?int
+    {
+        if (! $user) {
+            return null;
+        }
+
+        $user->loadMissing(['dealerProfile', 'profile']);
+
+        $dealerProfile = $user->dealerProfile;
+        if (
+            $dealerProfile
+            && (string) ($dealerProfile->status ?? '') === 'accepted'
+            && (int) ($dealerProfile->tier_id ?? 0) > 0
+        ) {
+            return (int) $dealerProfile->tier_id;
+        }
+
+        if ((int) ($user->tier_id ?? 0) > 0) {
+            return (int) $user->tier_id;
+        }
+
+        if ((int) ($user->profile?->tier ?? 0) > 0) {
+            return (int) $user->profile->tier;
+        }
+
+        return null;
+    }
+
+    private function resolveUnitPriceWithMinQty($prices, ?int $tierId, int $quantity): array
+    {
+        $rows = collect($prices)->sortBy('min_quantity')->values();
+        if ($rows->isEmpty()) {
+            return [
+                'unit_price' => 0,
+                'min_quantity' => 1,
+            ];
+        }
+
+        $tierRows = $tierId == null
+            ? collect()
+            : $rows->where('tier_id', $tierId)->values();
+
+        if ($tierRows->isEmpty()) {
+            $retailRows = $rows->filter(function ($row) {
+                $tierCode = strtoupper((string) ($row->tier->code ?? ''));
+                return $tierCode === 'RETAIL';
+            })->values();
+
+            if ($retailRows->isNotEmpty()) {
+                $tierRows = $retailRows;
+            }
+        }
+
+        if ($tierRows->isEmpty()) {
+            $firstTierId = (int) ($rows->first()->tier_id ?? 0);
+            $tierRows = $rows->where('tier_id', $firstTierId)->values();
+        }
+
+        $applied = $tierRows->first();
+        foreach ($tierRows as $row) {
+            if ((int) ($row->min_quantity ?? 0) <= $quantity) {
+                $applied = $row;
+            }
+        }
+
+        return [
+            'unit_price' => (float) ($applied->price ?? 0),
+            'min_quantity' => (int) ($applied->min_quantity ?? 1),
+        ];
     }
 }

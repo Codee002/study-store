@@ -171,6 +171,11 @@
                 </div>
               </div>
               </div>
+              <div v-if="isAiTyping" class="message-row">
+                <div class="message-bubble bot typing-bubble">
+                  <div class="typing-label">Trợ lý AI đang soạn tin nhắn...</div>
+                </div>
+              </div>
             </template>
           </div>
 
@@ -242,6 +247,7 @@ const loadingMessages = ref(false);
 const error = ref("");
 const draft = ref("");
 const sending = ref(false);
+const aiTypingConversationId = ref(null);
 const pendingFiles = ref([]);
 const filePicker = ref(null);
 const scrollBody = ref(null);
@@ -250,6 +256,10 @@ const currentUserId = computed(() => Number(headerStore.state.user?.id || JSON.p
 const orderedMessages = computed(() => [...messages.value].sort((a, b) => new Date(a.time) - new Date(b.time)));
 const canSend = computed(() => draft.value.trim() || pendingFiles.value.length);
 const lastOwnMessageId = computed(() => [...orderedMessages.value].reverse().find((item) => item.sender === "me")?.id || null);
+const isAiTyping = computed(() => (
+  activeConversation.value?.kind === "chatbox_advice"
+  && String(aiTypingConversationId.value || "") === String(activeConversation.value?.id || "")
+));
 let echoChannel = null;
 const openMenuId = ref(null);
 
@@ -364,25 +374,35 @@ async function send() {
   if (!canSend.value || !activeConversation.value || sending.value) return;
   sending.value = true;
   error.value = "";
+  let content = "";
+  let optimisticFiles = [];
+  const conversationId = activeConversation.value.id;
+  const isChatboxConversation = activeConversation.value.kind === "chatbox_advice";
   try {
-    const content = draft.value.trim();
-    const optimisticFiles = [...pendingFiles.value];
+    content = draft.value.trim();
+    optimisticFiles = [...pendingFiles.value];
+    if (isChatboxConversation) {
+      aiTypingConversationId.value = conversationId;
+    }
     draft.value = "";
     pendingFiles.value = [];
 
     const optimistic = { id: `local-${Date.now()}`, sender: "me", text: content, time: new Date().toISOString(), type: optimisticFiles.length ? "media" : "text", attachments: optimisticFiles.map((item) => ({ id: item.id, name: item.name, url: item.previewUrl, type: item.type })), is_read_by_partner: false };
     messages.value.push(optimistic);
-    updateConversationFromEvent({ conversation_id: activeConversation.value.id, content: optimistic.text, created_at: optimistic.time, type: optimistic.type, user_id: currentUserId.value });
-    const res = await MessageService.sendMessage(activeConversation.value.id, { content, files: optimisticFiles.map((item) => item.file) });
+    updateConversationFromEvent({ conversation_id: conversationId, content: optimistic.text, created_at: optimistic.time, type: optimistic.type, user_id: currentUserId.value });
+    const res = await MessageService.sendMessage(conversationId, { content, files: optimisticFiles.map((item) => item.file) });
     messages.value = messages.value.filter((item) => item.id !== optimistic.id);
     if (res?.data) {
       messages.value.push(mapMessage(res.data));
-      updateConversationFromEvent({ ...res.data, conversation_id: activeConversation.value.id });
+      updateConversationFromEvent({ ...res.data, conversation_id: conversationId });
     }
     await scrollToLatest();
   } catch (e) {
     error.value = e?.response?.data?.message || e?.message || "Gửi tin nhắn thất bại.";
     messages.value = messages.value.filter((item) => !String(item.id).startsWith("local-"));
+    if (String(aiTypingConversationId.value || "") === String(conversationId || "")) {
+      aiTypingConversationId.value = null;
+    }
     if (!draft.value) {
       draft.value = content;
     }
@@ -477,6 +497,12 @@ async function addSelectedProductsToCart(message) {
 function onMessageSent(event) {
   if (!event?.conversation_id) return;
   updateConversationFromEvent(event);
+  if (
+    String(event.conversation_id) === String(aiTypingConversationId.value || "")
+    && Number(event.user_id) !== currentUserId.value
+  ) {
+    aiTypingConversationId.value = null;
+  }
   if (String(event.conversation_id) !== String(activeConversation.value?.id || "")) return;
   messages.value = messages.value.filter((item) => !String(item.id).startsWith("local-"));
   const mapped = mapMessage(event);
@@ -524,6 +550,12 @@ watch(() => route.params.id, async (nextId) => {
   const target = conversations.value.find((item) => String(item.id) === String(nextId || ""));
   if (target && String(activeConversation.value?.id || "") !== String(target.id)) {
     await selectConversation(target.id, true);
+  }
+});
+
+watch(isAiTyping, async (typing) => {
+  if (typing) {
+    await scrollToLatest();
   }
 });
 
@@ -586,6 +618,8 @@ main.container {
 .message-row.mine .message-bubble { background: #ffddba; border-color: color-mix(in srgb, #f59e0b 35%, #ffddba); }
 .message-bubble.bot { background: color-mix(in srgb, #dbeafe 58%, #fff); border-color: color-mix(in srgb, #60a5fa 32%, #dbeafe); }
 .message-bubble.recalled { font-style: italic; color: #9ca3af; background: #f9fafb; border-style: dashed; }
+.typing-bubble { display: inline-flex; align-items: center; min-width: 220px; }
+.typing-label { color: #475569; font-style: italic; }
 .bubble-text { white-space: pre-line; line-height: 1.5; }
 .msg-actions { position: absolute; top: 8px; left: -38px; right: auto; }
 .msg-actions.left .dropdown-menu { left: 0; right: auto; top: 28px; }
