@@ -70,8 +70,11 @@ def semantic_search(body: SemanticQuery):
         lexical_score = lexical_scores.get(pid, 0.0)
         rerank = rerank_score(meta, features)
         combined_score = (semantic_score * 0.62) + (lexical_score * 0.38) + rerank
+        
+        # Loại sản phẩm có score thấp
         if semantic_score < body.score_threshold and lexical_score < 0.28 and combined_score < 0.34:
             continue
+        
         meta_with_score = meta.copy()
         meta_with_score["id"] = pid
         meta_with_score["score"] = float(combined_score)

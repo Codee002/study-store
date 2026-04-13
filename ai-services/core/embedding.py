@@ -32,5 +32,4 @@ def wrap_passage(p: str) -> str:
 
 def encode_texts(texts: List[str]) -> np.ndarray:
     model = load_model()
-    # Normalize embeddings so inner product = cosine similarity.
     return model.encode(texts, normalize_embeddings=True)
