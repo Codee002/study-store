@@ -13,6 +13,7 @@ use App\Models\OrderDetail;
 use App\Models\OrderDiscount;
 use App\Models\Payment;
 use App\Models\Product;
+use App\Models\Tier;
 use App\Models\User;
 use App\Models\WarehouseDetail;
 use App\Services\AiSearchClient;
@@ -97,7 +98,7 @@ class OrderController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Lay du lieu checkout thanh cong',
+                'message' => 'Lấy dữ liệu checkout thành công',
                 'data'    => [
                     'discounts' => $discounts,
                     'payments'  => $payments,
@@ -124,12 +125,13 @@ class OrderController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Lay du lieu checkout that bai',
+                'message' => 'Lấy dữ liệu checkout thất bại',
                 'error'   => $e->getMessage(),
             ], 500);
         }
     }
 
+    // Tạo thông tin đơn hàng cho giao diện thanh toán
     public function createVNPayPayment(Request $request)
     {
         try {
@@ -137,16 +139,22 @@ class OrderController extends Controller
             $user      = $request->user();
             $user->loadMissing('profile');
 
-            $preview        = $this->previewCheckoutPayloadForUser($user, $validated);
+            // Chuẩn bị dữ liệu thanh toán cho người dùng, nhưng chưa thay đổi DB
+            $prepared       = $this->prepareCheckoutPayloadForUser($user, $validated, false);
+
+            // Lấy dữ liệu preview để tạo vnpay
+            $preview        = $this->summarizePreparedCheckoutPayload($prepared);
+
+            // Kiểm tra xem phải phương thức VNPAY không
             $vnpayPaymentId = $this->resolveVNPayPaymentId();
             if ($vnpayPaymentId === null || (int) ($preview['payment_id'] ?? 0) !== $vnpayPaymentId) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Vui long chon phuong thuc thanh toan VNPay',
+                    'message' => 'Vui lòng chọn phương thức thanh toán VNPay',
                 ], 422);
             }
 
-            $config = $this->getVNPayConfig();
+            $config            = $this->getVNPayConfig();
             $txnRef            = $this->generateVNPayTxnRef();
             $frontendReturnUrl = $this->detectFrontendVNPayReturnUrl($request);
             $amount            = (int) round((float) ($preview['total_price'] ?? 0));
@@ -156,21 +164,23 @@ class OrderController extends Controller
                 'txn_ref'             => $txnRef,
                 'user_id'             => (int) $user->id,
                 'validated'           => $validated,
+                'prepared_order'      => $this->buildVNPayPreparedOrderDraft($prepared, $validated),
                 'expected_amount'     => $amount,
                 'frontend_return_url' => $frontendReturnUrl,
                 'created_at'          => now()->toISOString(),
             ], now()->addSeconds($draftTtl));
 
+            // Tạo URL thanh toán VNPay với các tham số cần thiết
             $paymentUrl = $this->buildVNPayPaymentUrl($config, [
                 'vnp_TxnRef'    => $txnRef,
                 'vnp_Amount'    => $amount * 100,
-                'vnp_OrderInfo' => 'Thanh toan don hang ' . $txnRef,
+                'vnp_OrderInfo' => 'Thanh toán đơn hàng ' . $txnRef,
                 'vnp_IpAddr'    => (string) ($request->ip() ?: '127.0.0.1'),
             ]);
 
             return response()->json([
                 'success' => true,
-                'message' => 'Tao link thanh toan VNPay thanh cong',
+                'message' => 'Tạo link thanh toán VNPay thành công',
                 'data'    => [
                     'txn_ref'     => $txnRef,
                     'payment_url' => $paymentUrl,
@@ -188,12 +198,13 @@ class OrderController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Tao link thanh toan VNPay that bai',
+                'message' => 'Tạo link thanh toán VNPay thất bại',
                 'error'   => $e->getMessage(),
             ], 500);
         }
     }
 
+    // Thông tin vnpay được trả về
     public function vnpayReturn(Request $request)
     {
         try {
@@ -208,6 +219,43 @@ class OrderController extends Controller
         $result            = Cache::get($this->vnpayResultCacheKey($txnRef));
         $draft             = Cache::get($this->vnpayDraftCacheKey($txnRef));
         $frontendReturnUrl = $result['frontend_return_url'] ?? $draft['frontend_return_url'] ?? null;
+
+        Log::info('[VNPAY] return received', [
+            'txn_ref'            => $txnRef,
+            'verified'           => (bool) ($verification['valid'] ?? false),
+            'response_code'      => $responseCode,
+            'transaction_status' => $transactionStatus,
+            'has_result'         => is_array($result),
+            'has_draft'          => is_array($draft),
+        ]);
+
+        // Kiểm tra chữ ký hợp lệ và trạng thái thành công từ VNPay, đồng thời phải có draft để đối chiếu
+        if (($verification['valid'] ?? false) && $this->isVNPaySuccessResponse($responseCode, $transactionStatus) && is_array($draft)) {
+            // Chuyển về giá tiền thực tế (do vnpay đang *100)
+        $incomingAmount = (int) round(((int) $request->query('vnp_Amount', 0)) / 100);
+            $expectedAmount = (int) ($draft['expected_amount'] ?? 0);
+
+            if ($incomingAmount > 0 && $incomingAmount === $expectedAmount) {
+                $result = $this->finalizeVNPaySuccess($txnRef, $draft);
+            } else {
+                Log::warning('[VNPAY] amount mismatch on return', [
+                    'txn_ref'         => $txnRef,
+                    'incoming_amount' => $incomingAmount,
+                    'expected_amount' => $expectedAmount,
+                ]);
+                $result = $this->storeVNPayResult([
+                    'txn_ref'             => $txnRef,
+                    'user_id'             => (int) ($draft['user_id'] ?? 0),
+                    'status'              => 'failed',
+                    'response_code'       => $responseCode,
+                    'transaction_status'  => $transactionStatus,
+                    'frontend_return_url' => $draft['frontend_return_url'] ?? null,
+                    'message'             => 'Invalid amount',
+                    'updated_at'          => now()->toISOString(),
+                ]);
+                Cache::forget($this->vnpayDraftCacheKey($txnRef));
+            }
+        }
 
         $status = 'failed';
         if (! ($verification['valid'] ?? false)) {
@@ -233,7 +281,7 @@ class OrderController extends Controller
 
         return response()->json([
             'success' => (bool) ($verification['valid'] ?? false),
-            'message' => 'VNPay return da duoc tiep nhan',
+            'message' => 'VNPay return đã được tiếp nhận',
             'data'    => [
                 'txn_ref'            => $txnRef,
                 'status'             => $status,
@@ -244,15 +292,24 @@ class OrderController extends Controller
         ], ($verification['valid'] ?? false) ? 200 : 422);
     }
 
+    // Kiểm tra dữ liệu từ IPN trả về
     public function vnpayIpn(Request $request)
     {
         try {
             $verification = $this->verifyVNPayRequestSignature($request->query());
             if (! ($verification['valid'] ?? false)) {
+                Log::warning('[VNPAY] invalid ipn signature', [
+                    'query' => $request->query(),
+                ]);
                 return $this->vnpayIpnResponse('97', 'Invalid Signature');
             }
 
             $txnRef = (string) ($request->query('vnp_TxnRef', ''));
+            Log::info('[VNPAY] ipn received', [
+                'txn_ref'            => $txnRef,
+                'response_code'      => (string) $request->query('vnp_ResponseCode', ''),
+                'transaction_status' => (string) $request->query('vnp_TransactionStatus', ''),
+            ]);
             if ($txnRef === '') {
                 return $this->vnpayIpnResponse('01', 'Order not found');
             }
@@ -270,6 +327,11 @@ class OrderController extends Controller
             $incomingAmount = (int) round(((int) $request->query('vnp_Amount', 0)) / 100);
             $expectedAmount = (int) ($draft['expected_amount'] ?? 0);
             if ($incomingAmount <= 0 || $incomingAmount !== $expectedAmount) {
+                Log::warning('[VNPAY] invalid ipn amount', [
+                    'txn_ref'         => $txnRef,
+                    'incoming_amount' => $incomingAmount,
+                    'expected_amount' => $expectedAmount,
+                ]);
                 return $this->vnpayIpnResponse('04', 'Invalid amount');
             }
 
@@ -278,7 +340,12 @@ class OrderController extends Controller
             $isSuccess         = $responseCode === '00' && ($transactionStatus === '' || $transactionStatus === '00');
 
             if (! $isSuccess) {
-                Cache::put($this->vnpayResultCacheKey($txnRef), [
+                Log::warning('[VNPAY] payment reported failed by gateway', [
+                    'txn_ref'            => $txnRef,
+                    'response_code'      => $responseCode,
+                    'transaction_status' => $transactionStatus,
+                ]);
+                $this->storeVNPayResult([
                     'txn_ref'             => $txnRef,
                     'user_id'             => (int) ($draft['user_id'] ?? 0),
                     'status'              => 'failed',
@@ -286,41 +353,32 @@ class OrderController extends Controller
                     'transaction_status'  => $transactionStatus,
                     'frontend_return_url' => $draft['frontend_return_url'] ?? null,
                     'updated_at'          => now()->toISOString(),
-                ], now()->addHours(24));
+                ]);
                 Cache::forget($this->vnpayDraftCacheKey($txnRef));
                 return $this->vnpayIpnResponse('00', 'Confirm Success');
             }
 
-            $lockKey = $this->vnpayProcessingCacheKey($txnRef);
-            if (! Cache::add($lockKey, 1, now()->addMinutes(5))) {
+            $result = $this->finalizeVNPaySuccess($txnRef, $draft);
+            if (($result['status'] ?? null) === 'success') {
                 return $this->vnpayIpnResponse('00', 'Confirm Success');
             }
 
-            try {
-                $user = User::query()->find((int) ($draft['user_id'] ?? 0));
-                if (! $user) {
-                    throw new \RuntimeException('Khong tim thay tai khoan thanh toan');
-                }
-
-                $payload = $this->createOrderFromCheckoutPayload($user, is_array($draft['validated'] ?? null) ? $draft['validated'] : []);
-
-                Cache::put($this->vnpayResultCacheKey($txnRef), [
-                    'txn_ref'             => $txnRef,
-                    'user_id'             => (int) $user->id,
-                    'status'              => 'success',
-                    'order_id'            => (int) ($payload['order_id'] ?? 0),
-                    'frontend_return_url' => $draft['frontend_return_url'] ?? null,
-                    'updated_at'          => now()->toISOString(),
-                ], now()->addHours(24));
-                Cache::forget($this->vnpayDraftCacheKey($txnRef));
-
-                return $this->vnpayIpnResponse('00', 'Confirm Success');
-            } finally {
-                Cache::forget($lockKey);
-            }
+            Log::warning('[VNPAY] ipn finalize failed', [
+                'txn_ref' => $txnRef,
+                'result'  => $result,
+            ]);
+            return $this->vnpayIpnResponse('99', (string) ($result['message'] ?? 'Unknown error'));
         } catch (\RuntimeException $e) {
+            Log::error('[VNPAY] ipn runtime exception', [
+                'message' => $e->getMessage(),
+                'query'   => $request->query(),
+            ]);
             return $this->vnpayIpnResponse('99', $e->getMessage());
         } catch (\Exception $e) {
+            Log::error('[VNPAY] ipn exception', [
+                'message' => $e->getMessage(),
+                'query'   => $request->query(),
+            ]);
             return $this->vnpayIpnResponse('99', 'Unknown error');
         }
     }
@@ -337,7 +395,7 @@ class OrderController extends Controller
         if (is_array($result) && (int) ($result['user_id'] ?? 0) === $userId) {
             return response()->json([
                 'success' => true,
-                'message' => 'Lay trang thai thanh toan thanh cong',
+                'message' => 'Lấy trạng thái thanh toán thành công',
                 'data'    => $result,
             ], 200);
         }
@@ -346,7 +404,7 @@ class OrderController extends Controller
         if (is_array($draft) && (int) ($draft['user_id'] ?? 0) === $userId) {
             return response()->json([
                 'success' => true,
-                'message' => 'Lay trang thai thanh toan thanh cong',
+                'message' => 'Lấy trạng thái thanh toán thành công',
                 'data'    => [
                     'txn_ref' => $txnRef,
                     'user_id' => $userId,
@@ -357,7 +415,7 @@ class OrderController extends Controller
 
         return response()->json([
             'success' => false,
-            'message' => 'Khong tim thay giao dich VNPay hoac da het han',
+            'message' => 'Không tìm thấy giao dịch VNPay hoặc đã hết hạn',
         ], 404);
     }
     public function placeOrder(Request $request, AiSearchClient $ai)
@@ -387,7 +445,7 @@ class OrderController extends Controller
             if (! $deliveryInfo) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Dia chi giao hang khong hop le',
+                    'message' => 'Địa chỉ giao hàng không hợp lệ',
                 ], 422);
             }
 
@@ -409,7 +467,7 @@ class OrderController extends Controller
             if (($isBuyNow && $isCartCheckout) || (! $isBuyNow && ! $isCartCheckout)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Du lieu dat hang khong hop le',
+                    'message' => 'Dữ liệu đặt hàng không hợp lệ',
                 ], 422);
             }
 
@@ -420,7 +478,7 @@ class OrderController extends Controller
                 if (! $cart) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Khong tim thay gio hang',
+                        'message' => 'Không tìm thấy giỏ hàng',
                     ], 404);
                 }
             }
@@ -574,7 +632,7 @@ class OrderController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Dat hang thanh cong',
+                'message' => 'Đặt hàng thành công',
                 'data'    => $payload,
             ], 200);
         } catch (ValidationException $e) {
@@ -587,7 +645,7 @@ class OrderController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Dat hang that bai',
+                'message' => 'Đặt hàng thất bại',
                 'error'   => $e->getMessage(),
             ], 500);
         }
@@ -596,20 +654,20 @@ class OrderController extends Controller
     public function myOrders(Request $request)
     {
         try {
-            $userId          = (int) $request->user()->id;
-            $q               = trim((string) $request->query('q', ''));
-            $status          = strtolower((string) $request->query('status', 'all'));
-            $paymentId       = (int) $request->query('payment_id', 0);
-            $priceMin        = $request->query('price_min', null);
-            $priceMax        = $request->query('price_max', null);
-            $orderedFrom     = trim((string) $request->query('ordered_from', ''));
-            $orderedTo       = trim((string) $request->query('ordered_to', ''));
-            $sortBy          = strtolower(trim((string) $request->query('sort_by', 'created_at_desc')));
-            $perPage         = (int) $request->query('per_page', 10);
-            $page            = (int) $request->query('page', 1);
-            $perPage         = $perPage > 0 ? min($perPage, 50) : 10;
-            $allowedStatus   = ['pending', 'shipping', 'completed', 'cancelled', 'rejected'];
-            $allowedSortBy   = ['created_at_desc', 'created_at_asc', 'total_price_desc', 'total_price_asc'];
+            $userId             = (int) $request->user()->id;
+            $q                  = trim((string) $request->query('q', ''));
+            $status             = strtolower((string) $request->query('status', 'all'));
+            $paymentId          = (int) $request->query('payment_id', 0);
+            $priceMin           = $request->query('price_min', null);
+            $priceMax           = $request->query('price_max', null);
+            $orderedFrom        = trim((string) $request->query('ordered_from', ''));
+            $orderedTo          = trim((string) $request->query('ordered_to', ''));
+            $sortBy             = strtolower(trim((string) $request->query('sort_by', 'created_at_desc')));
+            $perPage            = (int) $request->query('per_page', 10);
+            $page               = (int) $request->query('page', 1);
+            $perPage            = $perPage > 0 ? min($perPage, 50) : 10;
+            $allowedStatus      = ['pending', 'shipping', 'completed', 'cancelled', 'rejected'];
+            $allowedSortBy      = ['created_at_desc', 'created_at_asc', 'total_price_desc', 'total_price_asc'];
             $normalizedPriceMin = is_numeric($priceMin) ? max(0, (float) $priceMin) : null;
             $normalizedPriceMax = is_numeric($priceMax) ? max(0, (float) $priceMax) : null;
 
@@ -742,14 +800,14 @@ class OrderController extends Controller
                 ->get(['id', 'name'])
                 ->map(function (Payment $payment) {
                     return [
-                        'id' => (int) $payment->id,
+                        'id'   => (int) $payment->id,
                         'name' => (string) $payment->name,
                     ];
                 })
                 ->values();
 
             $paginator = $query->paginate($perPage, ['*'], 'page', $page);
-            $items = collect($paginator->items())->map(function (Order $order) {
+            $items     = collect($paginator->items())->map(function (Order $order) {
                 return $this->buildOrderPayload($order);
             })->values();
 
@@ -757,23 +815,23 @@ class OrderController extends Controller
                 'success' => true,
                 'message' => 'Lay danh sach don hang thanh cong',
                 'data'    => [
-                    'items' => $items,
-                    'meta'  => [
+                    'items'          => $items,
+                    'meta'           => [
                         'current_page' => $paginator->currentPage(),
                         'per_page'     => $paginator->perPage(),
                         'total'        => $paginator->total(),
                         'last_page'    => $paginator->lastPage(),
                     ],
-                    'filters' => [
+                    'filters'        => [
                         'payments' => $payments,
                     ],
                     'status_summary' => [
-                        'all' => (int) $statusSummary->sum(),
-                        'pending' => (int) ($statusSummary['pending'] ?? 0),
-                        'shipping' => (int) ($statusSummary['shipping'] ?? 0),
+                        'all'       => (int) $statusSummary->sum(),
+                        'pending'   => (int) ($statusSummary['pending'] ?? 0),
+                        'shipping'  => (int) ($statusSummary['shipping'] ?? 0),
                         'completed' => (int) ($statusSummary['completed'] ?? 0),
                         'cancelled' => (int) ($statusSummary['cancelled'] ?? 0),
-                        'rejected' => (int) ($statusSummary['rejected'] ?? 0),
+                        'rejected'  => (int) ($statusSummary['rejected'] ?? 0),
                     ],
                 ],
             ], 200);
@@ -855,7 +913,7 @@ class OrderController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Huy don hang thanh cong',
+                'message' => 'Hủy đơn hàng thành công',
                 'data'    => $this->buildOrderPayload($order),
             ], 200);
         } catch (\InvalidArgumentException $e) {
@@ -871,7 +929,7 @@ class OrderController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Huy don hang that bai',
+                'message' => 'Hủy đơn hàng thất bại',
                 'error'   => $e->getMessage(),
             ], 500);
         }
@@ -910,7 +968,7 @@ class OrderController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Xac nhan nhan hang thanh cong',
+                'message' => 'Xác nhận nhận hàng thành công',
                 'data'    => $this->buildOrderPayload($order),
             ], 200);
         } catch (\InvalidArgumentException $e) {
@@ -926,7 +984,7 @@ class OrderController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Xac nhan nhan hang that bai',
+                'message' => 'Xác nhận nhận hàng thất bại',
                 'error'   => $e->getMessage(),
             ], 500);
         }
@@ -936,12 +994,12 @@ class OrderController extends Controller
     {
         try {
             $validated = $request->validate([
-                'reviews'                 => ['required', 'array', 'min:1'],
-                'reviews.*.product_id'    => ['required', 'integer', 'exists:products,id'],
-                'reviews.*.rating'        => ['required', 'integer', 'min:1', 'max:5'],
-                'reviews.*.content'       => ['nullable', 'string', 'max:1000'],
-                'reviews.*.media_files'   => ['nullable', 'array'],
-                'reviews.*.media_files.*' => [
+                'reviews'                      => ['required', 'array', 'min:1'],
+                'reviews.*.product_id'         => ['required', 'integer', 'exists:products,id'],
+                'reviews.*.rating'             => ['required', 'integer', 'min:1', 'max:5'],
+                'reviews.*.content'            => ['nullable', 'string', 'max:1000'],
+                'reviews.*.media_files'        => ['nullable', 'array'],
+                'reviews.*.media_files.*'      => [
                     'file',
                     'max:51200',
                     'mimetypes:image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime,video/x-m4v',
@@ -951,7 +1009,7 @@ class OrderController extends Controller
             ]);
 
             $reviewEvents = [];
-            $order = DB::transaction(function () use ($request, $id, $validated, &$reviewEvents) {
+            $order        = DB::transaction(function () use ($request, $id, $validated, &$reviewEvents) {
                 $lockedOrder = Order::query()
                     ->where('id', (int) $id)
                     ->where('user_id', (int) $request->user()->id)
@@ -966,11 +1024,11 @@ class OrderController extends Controller
                     ->first();
 
                 if (! $lockedOrder) {
-                    throw new \InvalidArgumentException('Khong tim thay don hang');
+                    throw new \InvalidArgumentException('Không tìm thấy đơn hàng');
                 }
 
                 if ((string) $lockedOrder->status !== 'completed') {
-                    throw new \RuntimeException('Chi duoc danh gia khi don hang da hoan thanh');
+                    throw new \RuntimeException('Chỉ được đánh giá khi đơn hàng đã hoàn thành');
                 }
 
                 $orderProductIds = $lockedOrder->orderDetails
@@ -986,7 +1044,7 @@ class OrderController extends Controller
                     ->all();
 
                 if (empty($orderProductIds)) {
-                    throw new \RuntimeException('Don hang khong co san pham de danh gia');
+                    throw new \RuntimeException('Đơn hàng không có sản phẩm để đánh giá');
                 }
 
                 $reviewRows     = [];
@@ -994,11 +1052,11 @@ class OrderController extends Controller
                 foreach (($validated['reviews'] ?? []) as $row) {
                     $productId = (int) ($row['product_id'] ?? 0);
                     if (! in_array($productId, $orderProductIds, true)) {
-                        throw new \RuntimeException('Co san pham khong thuoc don hang');
+                        throw new \RuntimeException('Có sản phẩm không thuộc đơn hàng');
                     }
 
                     if (isset($seenProductIds[$productId])) {
-                        throw new \RuntimeException('Moi san pham chi duoc danh gia 1 lan trong mot lan gui');
+                        throw new \RuntimeException('Mỗi sản phẩm chỉ được đánh giá 1 lần trong một lần gửi');
                     }
 
                     $seenProductIds[$productId] = true;
@@ -1021,13 +1079,13 @@ class OrderController extends Controller
                 }
 
                 if (empty($reviewRows)) {
-                    throw new \RuntimeException('Khong co du lieu danh gia hop le');
+                    throw new \RuntimeException('Không có dữ liệu đánh giá hợp lệ');
                 }
 
                 $submittedProductIds = collect($reviewRows)->pluck('product_id')->map(function ($v) {
                     return (int) $v;
                 })->values()->all();
-                $existingEvaluates   = Evaluate::query()
+                $existingEvaluates = Evaluate::query()
                     ->with(['medias'])
                     ->where('order_id', (int) $lockedOrder->id)
                     ->whereIn('product_id', $submittedProductIds)
@@ -1166,7 +1224,7 @@ class OrderController extends Controller
             if (! $codPayment) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Khong co phuong thuc thanh toan khi nhan hang',
+                    'message' => 'Không có phương thức thanh toán khi nhận hàng',
                 ], 422);
             }
 
@@ -1213,7 +1271,7 @@ class OrderController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Lay du lieu tao don hang thanh cong',
+                'message' => 'Lấy dữ liệu tạo đơn hàng thành công',
                 'data'    => [
                     'users'        => $payloadUsers,
                     'payments'     => $payments,
@@ -1223,7 +1281,7 @@ class OrderController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Lay du lieu tao don hang that bai',
+                'message' => 'Lấy dữ liệu tạo đơn hàng thất bại',
                 'error'   => $e->getMessage(),
             ], 500);
         }
@@ -1233,14 +1291,14 @@ class OrderController extends Controller
     {
         try {
             $validated = $request->validate([
-                'user_id'                      => ['required', 'integer', 'exists:users,id'],
-                'delivery_info_id'             => ['required', 'integer', 'exists:delivery_infos,id'],
-                'payment_id'                   => ['required', 'integer', 'exists:payments,id'],
-                'items'                        => ['required', 'array', 'min:1'],
-                'items.*.product_id'           => ['required', 'integer', 'exists:products,id'],
-                'items.*.color_id'             => ['nullable', 'integer', 'exists:colors,id'],
-                'items.*.quantity'             => ['required', 'integer', 'min:1'],
-                'items.*.unit_price'           => ['required', 'numeric', 'gt:0'],
+                'user_id'            => ['required', 'integer', 'exists:users,id'],
+                'delivery_info_id'   => ['required', 'integer', 'exists:delivery_infos,id'],
+                'payment_id'         => ['required', 'integer', 'exists:payments,id'],
+                'items'              => ['required', 'array', 'min:1'],
+                'items.*.product_id' => ['required', 'integer', 'exists:products,id'],
+                'items.*.color_id'   => ['nullable', 'integer', 'exists:colors,id'],
+                'items.*.quantity'   => ['required', 'integer', 'min:1'],
+                'items.*.unit_price' => ['required', 'numeric', 'gt:0'],
             ]);
 
             $user = User::query()
@@ -1248,7 +1306,7 @@ class OrderController extends Controller
                 ->find((int) $validated['user_id']);
 
             if (! $user) {
-                throw new \InvalidArgumentException('Khong tim thay nguoi dung');
+                throw new \InvalidArgumentException('Không tìm thấy người dùng');
             }
 
             $deliveryInfo = DeliveryInfo::query()
@@ -1257,12 +1315,12 @@ class OrderController extends Controller
                 ->first();
 
             if (! $deliveryInfo) {
-                throw new \RuntimeException('Dia chi giao hang khong thuoc nguoi dung nay');
+                throw new \RuntimeException('Địa chỉ giao hàng không thuộc người dùng này');
             }
 
             $payment = $this->resolveCodPayment();
             if (! $payment || (int) $payment->id !== (int) $validated['payment_id']) {
-                throw new \RuntimeException('Chi duoc chon thanh toan khi nhan hang');
+                throw new \RuntimeException('Chỉ được chọn thanh toán khi nhận hàng');
             }
 
             $order = DB::transaction(function () use ($validated, $user, $deliveryInfo, $payment) {
@@ -1325,7 +1383,7 @@ class OrderController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Tao don hang thanh cong',
+                'message' => 'Tạo đơn hàng thành công',
                 'data'    => $this->buildAdminOrderPayload($order, true, $vnpayPaymentId),
             ], 201);
         } catch (ValidationException $e) {
@@ -1352,19 +1410,19 @@ class OrderController extends Controller
     public function adminOrders(Request $request)
     {
         try {
-            $q               = trim((string) $request->query('q', ''));
-            $status          = strtolower(trim((string) $request->query('status', 'all')));
-            $paymentId       = (int) $request->query('payment_id', 0);
-            $priceMin        = $request->query('price_min', null);
-            $priceMax        = $request->query('price_max', null);
-            $orderedFrom     = trim((string) $request->query('ordered_from', ''));
-            $orderedTo       = trim((string) $request->query('ordered_to', ''));
-            $sortBy          = strtolower(trim((string) $request->query('sort_by', 'created_at_desc')));
-            $perPage         = (int) $request->query('per_page', 10);
-            $page            = (int) $request->query('page', 1);
-            $perPage         = $perPage > 0 ? min($perPage, 50) : 10;
-            $allowedStatus   = ['pending', 'shipping', 'completed', 'cancelled', 'rejected'];
-            $allowedSortBy   = ['created_at_desc', 'created_at_asc', 'total_price_desc', 'total_price_asc'];
+            $q                  = trim((string) $request->query('q', ''));
+            $status             = strtolower(trim((string) $request->query('status', 'all')));
+            $paymentId          = (int) $request->query('payment_id', 0);
+            $priceMin           = $request->query('price_min', null);
+            $priceMax           = $request->query('price_max', null);
+            $orderedFrom        = trim((string) $request->query('ordered_from', ''));
+            $orderedTo          = trim((string) $request->query('ordered_to', ''));
+            $sortBy             = strtolower(trim((string) $request->query('sort_by', 'created_at_desc')));
+            $perPage            = (int) $request->query('per_page', 10);
+            $page               = (int) $request->query('page', 1);
+            $perPage            = $perPage > 0 ? min($perPage, 50) : 10;
+            $allowedStatus      = ['pending', 'shipping', 'completed', 'cancelled', 'rejected'];
+            $allowedSortBy      = ['created_at_desc', 'created_at_asc', 'total_price_desc', 'total_price_asc'];
             $normalizedPriceMin = is_numeric($priceMin) ? max(0, (float) $priceMin) : null;
             $normalizedPriceMax = is_numeric($priceMax) ? max(0, (float) $priceMax) : null;
 
@@ -1461,7 +1519,7 @@ class OrderController extends Controller
                 ->get(['id', 'name'])
                 ->map(function (Payment $payment) {
                     return [
-                        'id' => (int) $payment->id,
+                        'id'   => (int) $payment->id,
                         'name' => (string) $payment->name,
                     ];
                 })
@@ -1479,8 +1537,8 @@ class OrderController extends Controller
                 'success' => true,
                 'message' => 'Lay danh sach don hang thanh cong',
                 'data'    => [
-                    'items' => $items,
-                    'meta'  => [
+                    'items'   => $items,
+                    'meta'    => [
                         'current_page' => $paginator->currentPage(),
                         'per_page'     => $paginator->perPage(),
                         'total'        => $paginator->total(),
@@ -1511,7 +1569,7 @@ class OrderController extends Controller
                 ], 403);
             }
 
-            $q = trim((string) $request->query('q', ''));
+            $q       = trim((string) $request->query('q', ''));
             $perPage = max(1, min(50, (int) $request->query('per_page', 10)));
 
             $query = Evaluate::query()
@@ -1544,37 +1602,37 @@ class OrderController extends Controller
             $paginator = $query->paginate($perPage);
 
             $items = collect($paginator->items())->map(function (Evaluate $evaluate) {
-                $user = $evaluate->order?->user;
-                $profile = $user?->profile;
+                $user       = $evaluate->order?->user;
+                $profile    = $user?->profile;
                 $firstMedia = collect($evaluate->medias ?? [])
                     ->first(function ($media) {
                         return str_starts_with(strtolower((string) ($media->type ?? '')), 'image');
                     });
 
                 return [
-                    'id' => (int) ($evaluate->id ?? 0),
-                    'order_id' => (int) ($evaluate->order_id ?? 0),
-                    'product_id' => (int) ($evaluate->product_id ?? 0),
-                    'product_name' => (string) ($evaluate->product?->name ?? 'San pham'),
+                    'id'            => (int) ($evaluate->id ?? 0),
+                    'order_id'      => (int) ($evaluate->order_id ?? 0),
+                    'product_id'    => (int) ($evaluate->product_id ?? 0),
+                    'product_name'  => (string) ($evaluate->product?->name ?? 'San pham'),
                     'product_image' => (string) ($evaluate->product?->images?->first()?->url ?? ''),
                     'customer_name' => (string) ($profile?->name ?: $user?->username ?: 'Khach hang'),
-                    'rating' => (float) ($evaluate->rating ?? 0),
-                    'content' => $evaluate->content === null ? null : (string) $evaluate->content,
-                    'reply' => $evaluate->reply === null ? null : (string) $evaluate->reply,
-                    'created_at' => optional($evaluate->created_at)?->toISOString(),
-                    'image_url' => (string) ($firstMedia?->url ?? ''),
+                    'rating'        => (float) ($evaluate->rating ?? 0),
+                    'content'       => $evaluate->content === null ? null : (string) $evaluate->content,
+                    'reply'         => $evaluate->reply === null ? null : (string) $evaluate->reply,
+                    'created_at'    => optional($evaluate->created_at)?->toISOString(),
+                    'image_url'     => (string) ($firstMedia?->url ?? ''),
                 ];
             })->values();
 
             return response()->json([
                 'success' => true,
-                'data' => [
+                'data'    => [
                     'items' => $items,
-                    'meta' => [
+                    'meta'  => [
                         'current_page' => $paginator->currentPage(),
-                        'per_page' => $paginator->perPage(),
-                        'total' => $paginator->total(),
-                        'last_page' => $paginator->lastPage(),
+                        'per_page'     => $paginator->perPage(),
+                        'total'        => $paginator->total(),
+                        'last_page'    => $paginator->lastPage(),
                     ],
                 ],
             ], 200);
@@ -1582,7 +1640,7 @@ class OrderController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Lay danh sach danh gia that bai',
-                'error' => $e->getMessage(),
+                'error'   => $e->getMessage(),
             ], 500);
         }
     }
@@ -1623,8 +1681,8 @@ class OrderController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Phản hồi đánh giá thành công.',
-            'data' => [
-                'id' => (int) ($evaluate->id ?? 0),
+            'data'    => [
+                'id'    => (int) ($evaluate->id ?? 0),
                 'reply' => (string) ($evaluate->reply ?? ''),
             ],
         ]);
@@ -1705,16 +1763,16 @@ class OrderController extends Controller
                 $detailIds = $order->orderDetails->pluck('id')->map(function ($v) {
                     return (int) $v;
                 })->values()->all();
-                $inputMap  = [];
+                $inputMap = [];
 
                 foreach ($validated['allocations'] as $row) {
                     $detailId = (int) ($row['order_detail_id'] ?? 0);
                     if (! in_array($detailId, $detailIds, true)) {
-                        throw new \RuntimeException('Co chi tiet don hang khong thuoc don nay');
+                        throw new \RuntimeException('Có chi tiết đơn không thuộc vào đơn này');
                     }
 
                     if (isset($inputMap[$detailId])) {
-                        throw new \RuntimeException('Moi chi tiet don chi duoc khai bao 1 lan');
+                        throw new \RuntimeException('Mỗi chi tiết đơn chỉ được khai báo 1 lần');
                     }
 
                     $sourceMap = [];
@@ -1722,20 +1780,20 @@ class OrderController extends Controller
                         $warehouseDetailId = (int) ($source['warehouse_detail_id'] ?? 0);
                         $qty               = (int) ($source['quantity'] ?? 0);
                         if ($qty <= 0) {
-                            throw new \RuntimeException('So luong phan bo phai lon hon 0');
+                            throw new \RuntimeException('Số lượng phân bổ phải lớn hơn 0');
                         }
                         $sourceMap[$warehouseDetailId] = (int) ($sourceMap[$warehouseDetailId] ?? 0) + $qty;
                     }
 
                     if (empty($sourceMap)) {
-                        throw new \RuntimeException('Can chon kho cho moi san pham');
+                        throw new \RuntimeException('Cần chọn kho cho mỗi sản phẩm');
                     }
 
                     $inputMap[$detailId] = $sourceMap;
                 }
 
                 if (count($inputMap) !== count($detailIds)) {
-                    throw new \RuntimeException('Can phan bo du so luong cho tat ca san pham trong don');
+                    throw new \RuntimeException('Cần phân bổ đủ số lượng cho tất cả sản phẩm trong đơn');
                 }
 
                 foreach ($order->orderDetails as $detail) {
@@ -1744,12 +1802,12 @@ class OrderController extends Controller
                     $sourceMap   = $inputMap[$detailId] ?? null;
 
                     if (! is_array($sourceMap) || empty($sourceMap)) {
-                        throw new \RuntimeException('Thieu phan bo kho cho san pham trong don');
+                        throw new \RuntimeException('Thiếu phân bổ kho cho sản phẩm trong đơn');
                     }
 
                     $sumQty = array_sum($sourceMap);
                     if ($sumQty !== $requiredQty) {
-                        throw new \RuntimeException('Tong so luong phan bo phai bang so luong dat hang');
+                        throw new \RuntimeException('Tổng số lượng phân bổ phải bằng số lượng đặt hàng');
                     }
 
                     foreach ($sourceMap as $warehouseDetailId => $qty) {
@@ -1758,25 +1816,25 @@ class OrderController extends Controller
                             ->find((int) $warehouseDetailId);
 
                         if (! $stockRow) {
-                            throw new \RuntimeException('Kho da chon khong ton tai');
+                            throw new \RuntimeException('Kho đã chọn không tồn tại');
                         }
 
                         if ((string) $stockRow->status !== 'actived') {
-                            throw new \RuntimeException('Chi duoc chon ton kho dang hoat dong');
+                            throw new \RuntimeException('Chỉ được chọn tồn kho đang hoạt động');
                         }
 
                         if ((int) $stockRow->product_id !== (int) $detail->product_id) {
-                            throw new \RuntimeException('Kho chon khong dung san pham');
+                            throw new \RuntimeException('Kho chọn không đúng sản phẩm');
                         }
 
                         $stockColorId  = $stockRow->color_id === null ? null : (int) $stockRow->color_id;
                         $detailColorId = $detail->color_id === null ? null : (int) $detail->color_id;
                         if ($stockColorId !== $detailColorId) {
-                            throw new \RuntimeException('Kho chon khong dung phan loai mau');
+                            throw new \RuntimeException('Kho chọn không đúng phân loại màu');
                         }
 
                         if ((int) $stockRow->quantity < (int) $qty) {
-                            throw new \RuntimeException('So luong trong kho khong du de duyet don');
+                            throw new \RuntimeException('Số lượng trong kho không đủ để duyệt đơn');
                         }
 
                         $stockRow->quantity = (int) $stockRow->quantity - (int) $qty;
@@ -1837,11 +1895,11 @@ class OrderController extends Controller
                     ->find((int) $id);
 
                 if (! $order) {
-                    throw new \InvalidArgumentException('Khong tim thay don hang');
+                    throw new \InvalidArgumentException('Không tìm thấy đơn hàng');
                 }
 
                 if ((string) $order->status !== 'pending') {
-                    throw new \RuntimeException('Chi co the tu choi don o trang thai dang duyet');
+                    throw new \RuntimeException('Chỉ có thể từ chối đơn ở trạng thái đang duyệt');
                 }
 
                 $vnpayPayment = Payment::query()
@@ -1854,7 +1912,7 @@ class OrderController extends Controller
                     ->first();
 
                 if ($vnpayPayment && (int) $order->payment_id === (int) $vnpayPayment->id) {
-                    throw new \RuntimeException('Don hang thanh toan VNPay khong duoc tu choi');
+                    throw new \RuntimeException('Đơn hàng thanh toán VNPay không được từ chối');
                 }
 
                 $order->update(['status' => 'rejected']);
@@ -1876,7 +1934,7 @@ class OrderController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Tu choi don hang thanh cong',
+                'message' => 'Từ chối đơn thành công',
                 'data'    => $this->buildAdminOrderPayload($order, true, $vnpayPaymentId),
             ], 200);
         } catch (\InvalidArgumentException $e) {
@@ -1892,7 +1950,7 @@ class OrderController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Tu choi don hang that bai',
+                'message' => 'Từ chối đơn hàng thất bại',
                 'error'   => $e->getMessage(),
             ], 500);
         }
@@ -1918,8 +1976,13 @@ class OrderController extends Controller
     {
         $prepared = $this->prepareCheckoutPayloadForUser($user, $validated, false);
 
+        return $this->summarizePreparedCheckoutPayload($prepared);
+    }
+
+    private function summarizePreparedCheckoutPayload(array $prepared): array
+    {
         return [
-            'payment_id'       => (int) $prepared['payment']->id,
+            'payment_id'       => (int) ($prepared['payment']->id ?? 0),
             'product_subtotal' => round((float) $prepared['product_subtotal'], 2),
             'discount_price'   => round((float) $prepared['discount_value'], 2),
             'shipping_fee'     => (int) $prepared['shipping_fee'],
@@ -1987,6 +2050,141 @@ class OrderController extends Controller
         return $payload;
     }
 
+    private function buildVNPayPreparedOrderDraft(array $prepared, array $validated): array
+    {
+        return [
+            'delivery_info_id'  => (int) ($validated['delivery_info_id'] ?? 0),
+            'payment_id'        => (int) ($prepared['payment']->id ?? 0),
+            'cart_detail_ids'   => array_values(array_map('intval', (array) ($prepared['cart_detail_ids'] ?? []))),
+            'is_buy_now'        => (bool) ($prepared['is_buy_now'] ?? false),
+            'order_detail_rows' => collect((array) ($prepared['order_detail_rows'] ?? []))
+                ->map(function ($row) {
+                    return [
+                        'product_id' => (int) ($row['product_id'] ?? 0),
+                        'color_id'   => array_key_exists('color_id', $row) && $row['color_id'] !== null
+                            ? (int) $row['color_id']
+                            : null,
+                        'quantity'   => (int) ($row['quantity'] ?? 0),
+                        'price'      => round((float) ($row['price'] ?? 0), 2),
+                    ];
+                })
+                ->values()
+                ->all(),
+            'discount_rows'     => collect((array) ($prepared['discount_rows'] ?? []))
+                ->map(function ($row) {
+                    return [
+                        'discount_id' => (int) ($row['discount_id'] ?? 0),
+                        'price'       => round((float) ($row['price'] ?? 0), 2),
+                    ];
+                })
+                ->values()
+                ->all(),
+            'product_subtotal'  => round((float) ($prepared['product_subtotal'] ?? 0), 2),
+            'discount_value'    => round((float) ($prepared['discount_value'] ?? 0), 2),
+            'shipping_fee'      => (int) ($prepared['shipping_fee'] ?? self::SHIPPING_FEE),
+            'total'             => round((float) ($prepared['total'] ?? 0), 2),
+        ];
+    }
+
+    // Tạo đơn hàng từ vnpay
+    private function createOrderFromVNPayPreparedDraft($user, array $preparedDraft): array
+    {
+        $payload = DB::transaction(function () use ($user, $preparedDraft) {
+            $deliveryInfoId = (int) ($preparedDraft['delivery_info_id'] ?? 0);
+            $paymentId      = (int) ($preparedDraft['payment_id'] ?? 0);
+            $isBuyNow       = (bool) ($preparedDraft['is_buy_now'] ?? false);
+            $cartDetailIds  = array_values(array_filter(
+                array_map('intval', (array) ($preparedDraft['cart_detail_ids'] ?? [])),
+                function ($id) {
+                    return $id > 0;
+                }
+            ));
+            $orderDetailRows = array_values(array_filter(
+                (array) ($preparedDraft['order_detail_rows'] ?? []),
+                function ($row) {
+                    return (int) ($row['product_id'] ?? 0) > 0 && (int) ($row['quantity'] ?? 0) > 0;
+                }
+            ));
+            $discountRows = array_values(array_filter(
+                (array) ($preparedDraft['discount_rows'] ?? []),
+                function ($row) {
+                    return (int) ($row['discount_id'] ?? 0) > 0 && (float) ($row['price'] ?? 0) > 0;
+                }
+            ));
+
+            if ($deliveryInfoId <= 0 || $paymentId <= 0 || empty($orderDetailRows)) {
+                throw new \RuntimeException('Dữ liệu đơn hàng không hợp lệ');
+            }
+
+            $deliveryInfo = DeliveryInfo::query()
+                ->where('id', $deliveryInfoId)
+                ->where('user_id', (int) $user->id)
+                ->first();
+            if (! $deliveryInfo) {
+                throw new \RuntimeException('Địa chỉ giao hàng không hợp lệ');
+            }
+
+            $payment = Payment::query()
+                ->where('id', $paymentId)
+                ->where('status', 'actived')
+                ->first();
+            if (! $payment) {
+                throw new \RuntimeException('Phương thức thanh toán không hợp lệ hoặc đã tắt');
+            }
+
+            $order = Order::query()->create([
+                'user_id'          => (int) $user->id,
+                'delivery_info_id' => $deliveryInfoId,
+                'payment_id'       => $paymentId,
+                'status'           => 'pending',
+            ]);
+
+            foreach ($orderDetailRows as $row) {
+                OrderDetail::query()->create([
+                    'order_id'   => (int) $order->id,
+                    'product_id' => (int) $row['product_id'],
+                    'color_id'   => array_key_exists('color_id', $row) ? $row['color_id'] : null,
+                    'quantity'   => (int) $row['quantity'],
+                    'price'      => (float) $row['price'],
+                ]);
+            }
+
+            foreach ($discountRows as $discountRow) {
+                OrderDiscount::query()->create([
+                    'order_id'    => (int) $order->id,
+                    'discount_id' => (int) $discountRow['discount_id'],
+                    'price'       => (float) $discountRow['price'],
+                ]);
+            }
+
+            if (! $isBuyNow && ! empty($cartDetailIds)) {
+                $cart = Cart::query()->where('user_id', (int) $user->id)->first();
+                if ($cart) {
+                    CartDetail::query()
+                        ->where('cart_id', (int) $cart->id)
+                        ->whereIn('id', $cartDetailIds)
+                        ->delete();
+                }
+            }
+
+            return [
+                'order_id'         => (int) $order->id,
+                'status'           => (string) $order->status,
+                'delivery_info_id' => $deliveryInfoId,
+                'payment_id'       => $paymentId,
+                'product_subtotal' => round((float) ($preparedDraft['product_subtotal'] ?? 0), 2),
+                'discount_price'   => round((float) ($preparedDraft['discount_value'] ?? 0), 2),
+                'shipping_fee'     => (int) ($preparedDraft['shipping_fee'] ?? self::SHIPPING_FEE),
+                'total_price'      => round((float) ($preparedDraft['total'] ?? 0), 2),
+            ];
+        });
+
+        Cache::tags(['products', 'warehouses', 'orders'])->flush();
+
+        return $payload;
+    }
+
+    // Kiểm tra dữ liệu cần thiết trước khi đặt hàng, không lưu vào DB
     private function prepareCheckoutPayloadForUser($user, array $validated, bool $lockRows): array
     {
         $user->loadMissing('profile');
@@ -1996,7 +2194,7 @@ class OrderController extends Controller
             ->where('user_id', (int) $user->id)
             ->first();
         if (! $deliveryInfo) {
-            throw new \RuntimeException('Dia chi giao hang khong hop le');
+            throw new \RuntimeException('Địa chỉ giao hàng không hợp lệ');
         }
 
         $cartDetailIds = collect($validated['cart_detail_ids'] ?? [])
@@ -2014,14 +2212,14 @@ class OrderController extends Controller
         $isBuyNow       = is_array($buyNowItem);
         $isCartCheckout = ! empty($cartDetailIds);
         if (($isBuyNow && $isCartCheckout) || (! $isBuyNow && ! $isCartCheckout)) {
-            throw new \RuntimeException('Du lieu dat hang khong hop le');
+            throw new \RuntimeException('Dữ liệu đặt hàng không hợp lệ');
         }
 
         $cart = null;
         if ($isCartCheckout) {
             $cart = Cart::query()->where('user_id', (int) $user->id)->first();
             if (! $cart) {
-                throw new \RuntimeException('Khong tim thay gio hang');
+                throw new \RuntimeException('Không tìm thấy giỏ hàng');
             }
         }
 
@@ -2030,9 +2228,10 @@ class OrderController extends Controller
             ->where('status', 'actived')
             ->first();
         if (! $payment) {
-            throw new \RuntimeException('Phuong thuc thanh toan khong hop le hoac da tat');
+            throw new \RuntimeException('Phương thức thanh toán không hợp lệ hoặc đã tắt');
         }
 
+        // Tìm tierId và tính toán giá trị đơn hàng
         $tierId = $this->resolveEffectiveTierId($user);
         $draft  = $this->buildCheckoutDraft($user, [
             'cart_detail_ids' => $cartDetailIds,
@@ -2050,6 +2249,7 @@ class OrderController extends Controller
             ->values()
             ->all();
 
+        // Tính giá trị khuyến mãi
         $discountResult  = $this->resolveDiscountRowsForCheckoutDraft($draft, $selectedDiscountIds, Carbon::today());
         $shippingFee     = self::SHIPPING_FEE;
         $productSubtotal = (float) $draft['product_subtotal'];
@@ -2074,6 +2274,7 @@ class OrderController extends Controller
         ];
     }
 
+    // Kiểm tra khuyến mãi cho đơn hàng
     private function resolveDiscountRowsForCheckoutDraft(array $draft, array $selectedDiscountIds, Carbon $today): array
     {
         $categorySubtotals = (array) ($draft['category_subtotals'] ?? []);
@@ -2093,19 +2294,24 @@ class OrderController extends Controller
             ->get();
 
         if ($discounts->count() !== count($selectedDiscountIds)) {
-            throw new \RuntimeException('Co khuyen mai khong hop le hoac da het han');
+            throw new \RuntimeException('Có khuyến mãi không hợp lệ hoặc đã hết hạn');
         }
 
         $selectedCategoryDiscounts = [];
         foreach ($discounts as $discount) {
             $categoryId = (int) ($discount->category_id ?? 0);
+
+            // Kiểm tra xem khuyến mãi có áp dụng cho các sản phẩm không
             if (! in_array($categoryId, $categoryIds, true)) {
-                throw new \RuntimeException('Khuyen mai khong ap dung cho san pham da chon');
-            }
-            if (isset($selectedCategoryDiscounts[$categoryId])) {
-                throw new \RuntimeException('Chi duoc chon 1 khuyen mai cho moi danh muc');
+                throw new \RuntimeException('Khuyến mãi không áp dụng cho sản phẩm đã chọn');
             }
 
+            // Kiểm tra xem đã có khuyến mãi nào được chọn cho danh mục này chưa
+            if (isset($selectedCategoryDiscounts[$categoryId])) {
+                throw new \RuntimeException('Chỉ được chọn 1 khuyến mãi cho mỗi danh mục');
+            }
+
+            // Tính lại giá trị khuyến mãi cho danh mục này
             $eligibleSubtotal                       = (float) ($categorySubtotals[$categoryId] ?? 0);
             $value                                  = round($eligibleSubtotal * ((float) $discount->percent) / 100, 2);
             $selectedCategoryDiscounts[$categoryId] = true;
@@ -2146,6 +2352,7 @@ class OrderController extends Controller
         return $config;
     }
 
+    // Build VNpay URL cho đơn hàng
     private function buildVNPayPaymentUrl(array $config, array $overrides): string
     {
         $now    = Carbon::now('Asia/Ho_Chi_Minh');
@@ -2174,6 +2381,7 @@ class OrderController extends Controller
         return rtrim($config['url'], '?') . '?' . $signData . '&vnp_SecureHashType=SHA512&vnp_SecureHash=' . $hash;
     }
 
+    // Xác thực chữ ký của VNPay gửi về
     private function verifyVNPayRequestSignature(array $query): array
     {
         $secureHash = (string) ($query['vnp_SecureHash'] ?? '');
@@ -2202,6 +2410,7 @@ class OrderController extends Controller
         return http_build_query($params, '', '&', PHP_QUERY_RFC1738);
     }
 
+    // Trả url về client
     private function detectFrontendVNPayReturnUrl(Request $request): ?string
     {
         $origin = trim((string) $request->headers->get('origin', ''));
@@ -2224,6 +2433,7 @@ class OrderController extends Controller
         return null;
     }
 
+    // Tạo khóa DB
     private function generateVNPayTxnRef(): string
     {
         return 'VNP' . now()->format('YmdHis') . random_int(1000, 9999);
@@ -2242,6 +2452,89 @@ class OrderController extends Controller
     private function vnpayProcessingCacheKey(string $txnRef): string
     {
         return 'vnpay:lock:' . $txnRef;
+    }
+
+    // KTra hợp lệ khi status code 00
+    private function isVNPaySuccessResponse(string $responseCode, string $transactionStatus): bool
+    {
+        return $responseCode === '00' && ($transactionStatus === '' || $transactionStatus === '00');
+    }
+
+    private function storeVNPayResult(array $payload): array
+    {
+        Cache::put($this->vnpayResultCacheKey((string) ($payload['txn_ref'] ?? '')), $payload, now()->addHours(24));
+
+        return $payload;
+    }
+
+    // Tạo đơn hàng khi thanh toán thành công
+    private function finalizeVNPaySuccess(string $txnRef, array $draft): array
+    {
+        $existingResult = Cache::get($this->vnpayResultCacheKey($txnRef));
+        if (is_array($existingResult) && in_array(($existingResult['status'] ?? null), ['success', 'failed'], true)) {
+            return $existingResult;
+        }
+
+        $lockKey = $this->vnpayProcessingCacheKey($txnRef);
+        if (! Cache::add($lockKey, 1, now()->addMinutes(5))) {
+            return is_array($existingResult)
+                ? $existingResult
+                : [
+                'txn_ref' => $txnRef,
+                'user_id' => (int) ($draft['user_id'] ?? 0),
+                'status'  => 'processing',
+            ];
+        }
+
+        try {
+            $user = User::query()->find((int) ($draft['user_id'] ?? 0));
+            if (! $user) {
+                throw new \RuntimeException('Khong tim thay tai khoan thanh toan');
+            }
+
+            $preparedOrderDraft = is_array($draft['prepared_order'] ?? null) ? $draft['prepared_order'] : null;
+            $payload            = is_array($preparedOrderDraft)
+                ? $this->createOrderFromVNPayPreparedDraft($user, $preparedOrderDraft)
+                : $this->createOrderFromCheckoutPayload($user, is_array($draft['validated'] ?? null) ? $draft['validated'] : []);
+
+            $result = $this->storeVNPayResult([
+                'txn_ref'             => $txnRef,
+                'user_id'             => (int) $user->id,
+                'status'              => 'success',
+                'order_id'            => (int) ($payload['order_id'] ?? 0),
+                'frontend_return_url' => $draft['frontend_return_url'] ?? null,
+                'updated_at'          => now()->toISOString(),
+            ]);
+            Cache::forget($this->vnpayDraftCacheKey($txnRef));
+
+            Log::info('[VNPAY] finalize success', [
+                'txn_ref'  => $txnRef,
+                'order_id' => (int) ($payload['order_id'] ?? 0),
+            ]);
+
+            return $result;
+        } catch (\Throwable $e) {
+            Log::error('[VNPAY] finalize failed', [
+                'txn_ref'        => $txnRef,
+                'user_id'        => (int) ($draft['user_id'] ?? 0),
+                'message'        => $e->getMessage(),
+                'prepared_order' => $draft['prepared_order'] ?? null,
+                'validated'      => $draft['validated'] ?? null,
+            ]);
+            $result = $this->storeVNPayResult([
+                'txn_ref'             => $txnRef,
+                'user_id'             => (int) ($draft['user_id'] ?? 0),
+                'status'              => 'failed',
+                'frontend_return_url' => $draft['frontend_return_url'] ?? null,
+                'message'             => $e->getMessage(),
+                'updated_at'          => now()->toISOString(),
+            ]);
+            Cache::forget($this->vnpayDraftCacheKey($txnRef));
+
+            return $result;
+        } finally {
+            Cache::forget($lockKey);
+        }
     }
 
     private function vnpayIpnResponse(string $code, string $message)
@@ -2336,8 +2629,8 @@ class OrderController extends Controller
         $discountPrice = (float) $order->orderDiscounts->sum(function ($row) {
             return (float) ($row->price ?? 0);
         });
-        $shippingFee   = self::SHIPPING_FEE;
-        $totalPrice    = max(0, $productSubtotal - $discountPrice + $shippingFee);
+        $shippingFee = self::SHIPPING_FEE;
+        $totalPrice  = max(0, $productSubtotal - $discountPrice + $shippingFee);
 
         return [
             'id'                  => (int) $order->id,
@@ -2432,7 +2725,7 @@ class OrderController extends Controller
             return $payload;
         }
 
-        $detailMap        = $order->orderDetails->keyBy(function ($detail) {
+        $detailMap = $order->orderDetails->keyBy(function ($detail) {
             return (int) $detail->id;
         });
         $payload['items'] = collect($payload['items'])->map(function ($item) use ($detailMap) {
@@ -2558,6 +2851,7 @@ class OrderController extends Controller
             ->values()
             ->all();
 
+        // Kiểm tra xem mua từ giỏ hay mua ngay
         $buyNowItem     = $validated['buy_now_item'] ?? null;
         $isBuyNow       = is_array($buyNowItem);
         $isCartCheckout = ! empty($cartDetailIds);
@@ -2574,9 +2868,9 @@ class OrderController extends Controller
             }
         }
 
-        $productSubtotal   = 0.0;
-        $categorySubtotals = [];
-        $orderDetailRows   = [];
+        $productSubtotal   = 0.0;   // tổng tiền sản phẩm
+        $categorySubtotals = [];    // tổng tiền theo danh mục
+        $orderDetailRows   = [];    // dữ liệu chi tiết đơn
 
         if ($isBuyNow) {
             $productId = (int) ($buyNowItem['product_id'] ?? 0);
@@ -2597,14 +2891,18 @@ class OrderController extends Controller
             if (! $product) {
                 throw new \RuntimeException('Không tìm thấy sản phẩm');
             }
-
+            // Tính tồn kho và số lượng đủ, trả về trạng thái tồn kho
             $availability = $this->resolveStockAvailability($productId, $colorId, $qty);
+
+            // dựa vào biến trả về bên trên để trả lỗi nếu không đủ hàng
             $this->ensureCheckoutAvailability($product->name, $availability);
 
+            // Tìm giá bán áp dụng đúng
             $unitPrice    = $this->resolveUnitPrice($product->prices, $tierId, $qty);
             $lineSubtotal = $unitPrice * $qty;
             $categoryId   = (int) ($product->category_id ?? 0);
 
+            // Cộng dồn subtotal cho sản phẩm và cho danh mục tương ứng (dùng tính tiền khuyến mãi nếu có)
             $productSubtotal += $lineSubtotal;
             if ($categoryId > 0) {
                 $categorySubtotals[$categoryId] = (float) ($categorySubtotals[$categoryId] ?? 0) + $lineSubtotal;
@@ -2619,6 +2917,8 @@ class OrderController extends Controller
                 'line_subtotal' => $lineSubtotal,
             ];
         } else {
+
+            // Mua hàng bằng Cart
             $cartDetailQuery = CartDetail::query()
                 ->where('cart_id', (int) $cart->id)
                 ->whereIn('id', $cartDetailIds)
@@ -2631,16 +2931,17 @@ class OrderController extends Controller
             $cartDetails = $cartDetailQuery->get();
 
             if ($cartDetails->count() !== count($cartDetailIds)) {
-                throw new \RuntimeException('Co san pham khong ton tai trong gio hang');
+                throw new \RuntimeException('Có sản phẩm không tồn tại trong giỏ hàng');
             }
 
             foreach ($cartDetails as $detail) {
                 $product = $detail->product;
                 if (! $product) {
-                    throw new \RuntimeException('San pham trong gio hang khong ton tai');
+                    throw new \RuntimeException('Sản phẩm trong giỏ hàng không tồn tại');
                 }
 
-                $qty = max(1, (int) $detail->quantity);
+                // Kiểm tra số lượng, tính giá tiền tương tự như trên
+                $qty          = max(1, (int) $detail->quantity);
                 $availability = $this->resolveStockAvailability(
                     (int) $detail->product_id,
                     $detail->color_id ? (int) $detail->color_id : null,
@@ -2686,27 +2987,31 @@ class OrderController extends Controller
 
     private function resolveUnitPrice($prices, ?int $tierId, int $quantity): float
     {
+        // Sắp xếp giá theo min_quantity
         $rows = collect($prices)->sortBy('min_quantity')->values();
 
         if ($rows->isEmpty()) {
             throw new \RuntimeException('Sản phẩm không có giá bán');
         }
 
+        // Lấy ra giá của tier người dùng
         $tierRows = $tierId == null
             ? collect()
             : $rows->where('tier_id', $tierId)->values();
 
+        // Nếu không có giá nào khớp với tier người dùng, lấy giá của tier "RETAIL"
         if ($tierRows->isEmpty()) {
-            $retailRows = $rows->filter(function ($row) {
-                $tierCode = strtoupper((string) ($row->tier->code ?? ''));
-                return $tierCode === 'RETAIL';
-            })->values();
+            $defaultTierId = (int) (Tier::query()->where('default', 1)->value('id') ?? 0);
+            $retailRows = $defaultTierId > 0
+                ? $rows->where('tier_id', $defaultTierId)->values()
+                : collect();
 
             if ($retailRows->isNotEmpty()) {
                 $tierRows = $retailRows;
             }
         }
 
+        // Nếu tiếp tục không có thì chuyển giá về cho tier đầu tiên có dữ liệu
         if ($tierRows->isEmpty()) {
             $firstTierId = (int) ($rows->first()->tier_id ?? 0);
             $tierRows    = $rows->where('tier_id', $firstTierId)->values();
@@ -2722,6 +3027,7 @@ class OrderController extends Controller
         return (float) ($applied->price ?? 0);
     }
 
+    // Quăng các lỗi về số lượng
     private function ensureCheckoutAvailability(string $productName, array $availability): void
     {
         $status = (string) ($availability['status'] ?? 'unavailable');
@@ -2731,26 +3037,32 @@ class OrderController extends Controller
         }
 
         if ($status === 'unavailable') {
-            throw new \RuntimeException("San pham {$productName} khong kha dung");
+            throw new \RuntimeException("Sản phẩm {$productName} không khả dụng");
         }
 
-        throw new \RuntimeException("San pham {$productName} da het hang");
+        throw new \RuntimeException("Sản phẩm {$productName} đã hết hàng");
     }
 
+    // Kiểm tra số lượng tồn kho, đang active và phải hợp lệ, trả về status miêu tả lỗi
     private function resolveStockAvailability(int $productId, ?int $colorId = null, int $requestedQuantity = 1): array
     {
+        // Lấy sản phẩm trong kho đang active
         $query = WarehouseDetail::query()
             ->where('product_id', $productId)
             ->where('status', 'actived');
 
+        // Kiểm tra màu sản phẩm
         $this->applyColorFilter($query, $colorId);
+
+        // Lấy số lượng và số dòng hợp lệ
         $warehouseData = $query
             ->selectRaw('COUNT(*) as active_row_count, COALESCE(SUM(quantity), 0) as stock_quantity')
             ->first();
 
         $activeRowCount = (int) ($warehouseData->active_row_count ?? 0);
-        $warehouseQty = (int) ($warehouseData->stock_quantity ?? 0);
+        $warehouseQty   = (int) ($warehouseData->stock_quantity ?? 0);
 
+        // Tính số lượng đã được đặt trong các đơn hàng đang pending
         $reservedQuery = OrderDetail::query()
             ->join('orders', 'orders.id', '=', 'order_details.order_id')
             ->where('orders.status', 'pending')
@@ -2763,31 +3075,35 @@ class OrderController extends Controller
         }
 
         $reservedQty = (int) $reservedQuery->sum('order_details.quantity');
+
         $availableQty = max(0, $warehouseQty - $reservedQty);
 
+        // Kiểm tra nếu không có dòng active nào trong kho
         if ($activeRowCount <= 0) {
             return [
-                'status' => 'unavailable',
+                'status'             => 'unavailable',
                 'available_quantity' => 0,
             ];
         }
 
+        // Kiểm tra nếu không đủ số lượng
         if ($availableQty <= 0) {
             return [
-                'status' => 'out_of_stock',
+                'status'             => 'out_of_stock',
                 'available_quantity' => 0,
             ];
         }
 
+        // Kiểm tra nếu số lượng yêu cầu lớn hơn số lượng có sẵn
         if ($requestedQuantity > $availableQty) {
             return [
-                'status' => 'insufficient_stock',
+                'status'             => 'insufficient_stock',
                 'available_quantity' => $availableQty,
             ];
         }
 
         return [
-            'status' => 'available',
+            'status'             => 'available',
             'available_quantity' => $availableQty,
         ];
     }

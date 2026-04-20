@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Cart;
 use App\Models\CartDetail;
+use App\Models\Tier;
 use App\Models\WarehouseDetail;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
@@ -114,7 +115,7 @@ class CartController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Them san pham vao gio hang thanh cong',
+                'message' => 'Thêm sản phẩm vào giỏ hàng thành công',
                 'data'    => $this->buildCartPayload($cart->fresh(), $tierId),
             ], 200);
         } catch (\RuntimeException $e) {
@@ -125,7 +126,7 @@ class CartController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Them san pham vao gio hang that bai',
+                'message' => 'Thêm sản phẩm vào giỏ hàng thất bại',
                 'error'   => $e->getMessage(),
             ], 500);
         }
@@ -142,20 +143,20 @@ class CartController extends Controller
             if (! $cart) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Khong tim thay gio hang',
+                    'message' => 'Không tìm thấy giỏ hàng',
                 ], 404);
             }
             $tierId = $this->resolveEffectiveTierId($request->user());
 
             return response()->json([
                 'success' => true,
-                'message' => 'Lay chi tiet gio hang thanh cong',
+                'message' => 'Lấy chi tiết giỏ hàng thành công',
                 'data'    => $this->buildCartPayload($cart, $tierId),
             ], 200);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Lay chi tiet gio hang that bai',
+                'message' => 'Lấy chi tiết giỏ hàng thất bại',
                 'error'   => $e->getMessage(),
             ], 500);
         }
@@ -179,7 +180,7 @@ class CartController extends Controller
             if (! $cart) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Khong tim thay gio hang',
+                    'message' => 'Không tìm thấy giỏ hàng',
                 ], 404);
             }
             $tierId = $this->resolveEffectiveTierId($request->user());
@@ -187,7 +188,7 @@ class CartController extends Controller
             if (empty($validated['cart_detail_id']) && empty($validated['product_id'])) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Can truyen cart_detail_id hoac product_id',
+                    'message' => 'Cần truyền cart_detail_id hoặc product_id',
                 ], 422);
             }
 
@@ -207,14 +208,14 @@ class CartController extends Controller
                 $detail = $detailQuery->first();
 
                 if (! $detail) {
-                    throw new \InvalidArgumentException('Khong tim thay san pham trong gio hang');
+                    throw new \InvalidArgumentException('Không tìm thấy sản phẩm trong giỏ hàng');
                 }
 
                 $nextQuantity = (int) $validated['quantity'];
                 $stockQty     = $this->getAvailableStock((int) $detail->product_id, $detail->color_id ? (int) $detail->color_id : null);
 
                 if ($nextQuantity > $stockQty) {
-                    throw new \RuntimeException('So luong cap nhat vuot qua ton kho');
+                    throw new \RuntimeException('Số lượng cập nhật vượt quá tồn kho');
                 }
 
                 $detail->quantity = $nextQuantity;
@@ -223,7 +224,7 @@ class CartController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Cap nhat gio hang thanh cong',
+                'message' => 'Cập nhật giỏ hàng thành công',
                 'data'    => $this->buildCartPayload($cart->fresh(), $tierId),
             ], 200);
         } catch (\InvalidArgumentException $e) {
@@ -239,7 +240,7 @@ class CartController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Cap nhat gio hang that bai',
+                'message' => 'Cập nhật giỏ hàng thất bại',
                 'error'   => $e->getMessage(),
             ], 500);
         }
@@ -256,7 +257,7 @@ class CartController extends Controller
             if (! $cart) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Khong tim thay gio hang',
+                    'message' => 'Không tìm thấy giỏ hàng',
                 ], 404);
             }
             $tierId = $this->resolveEffectiveTierId($request->user());
@@ -272,13 +273,13 @@ class CartController extends Controller
                 if (! $deleted) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Khong tim thay san pham trong gio hang',
+                        'message' => 'Không tìm thấy sản phẩm trong giỏ hàng',
                     ], 404);
                 }
 
                 return response()->json([
                     'success' => true,
-                    'message' => 'Xoa san pham khoi gio hang thanh cong',
+                    'message' => 'Xóa sản phẩm khỏi giỏ hàng thành công',
                     'data'    => $this->buildCartPayload($cart->fresh(), $tierId),
                 ], 200);
             }
@@ -287,13 +288,13 @@ class CartController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Xoa toan bo gio hang thanh cong',
+                'message' => 'Xóa toàn bộ giỏ hàng thành công',
                 'data'    => $this->buildCartPayload($cart->fresh(), $tierId),
             ], 200);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Xoa gio hang that bai',
+                'message' => 'Xóa giỏ hàng thất bại',
                 'error'   => $e->getMessage(),
             ], 500);
         }
@@ -399,7 +400,7 @@ class CartController extends Controller
         if ($activeRowCount <= 0) {
             return [
                 'status' => 'unavailable',
-                'message' => 'San pham khong kha dung',
+                'message' => 'ản phẩm không khả dụng',
                 'available_quantity' => 0,
                 'is_available' => false,
                 'can_checkout' => false,
@@ -409,7 +410,7 @@ class CartController extends Controller
         if ($availableQuantity <= 0) {
             return [
                 'status' => 'out_of_stock',
-                'message' => 'San pham da het hang',
+                'message' => 'Sản phẩm đã hết hàng',
                 'available_quantity' => 0,
                 'is_available' => false,
                 'can_checkout' => false,
@@ -419,7 +420,8 @@ class CartController extends Controller
         if ($requestedQuantity > $availableQuantity) {
             return [
                 'status' => 'insufficient_stock',
-                'message' => 'San pham da het hang',
+                'message' => 'Sản phẩmđãhếthàng
+',
                 'available_quantity' => $availableQuantity,
                 'is_available' => false,
                 'can_checkout' => false,
@@ -498,10 +500,10 @@ class CartController extends Controller
             : $rows->where('tier_id', $tierId)->values();
 
         if ($tierRows->isEmpty()) {
-            $retailRows = $rows->filter(function ($row) {
-                $tierCode = strtoupper((string) ($row->tier->code ?? ''));
-                return $tierCode === 'RETAIL';
-            })->values();
+            $defaultTierId = (int) (Tier::query()->where('default', 1)->value('id') ?? 0);
+            $retailRows = $defaultTierId > 0
+                ? $rows->where('tier_id', $defaultTierId)->values()
+                : collect();
 
             if ($retailRows->isNotEmpty()) {
                 $tierRows = $retailRows;
