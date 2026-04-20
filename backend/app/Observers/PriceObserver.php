@@ -2,27 +2,23 @@
 
 namespace App\Observers;
 
+use App\Jobs\SyncAiProductJob;
 use App\Models\Price;
-use App\Services\AiProductSyncService;
 
 class PriceObserver
 {
-    public function __construct(private AiProductSyncService $sync)
-    {
-    }
-
     public function created(Price $price): void
     {
-        $this->sync->syncProductById($price->product_id);
+        SyncAiProductJob::dispatch($price->product_id)->afterCommit();
     }
 
     public function updated(Price $price): void
     {
-        $this->sync->syncProductById($price->product_id);
+        SyncAiProductJob::dispatch($price->product_id)->afterCommit();
     }
 
     public function deleted(Price $price): void
     {
-        $this->sync->syncProductById($price->product_id);
+        SyncAiProductJob::dispatch($price->product_id)->afterCommit();
     }
 }

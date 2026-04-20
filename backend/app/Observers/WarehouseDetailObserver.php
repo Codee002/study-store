@@ -2,18 +2,14 @@
 
 namespace App\Observers;
 
+use App\Jobs\SyncAiProductJob;
 use App\Models\WarehouseDetail;
-use App\Services\AiProductSyncService;
 
 class WarehouseDetailObserver
 {
-    public function __construct(private AiProductSyncService $sync)
-    {
-    }
-
     public function created(WarehouseDetail $detail): void
     {
-        $this->sync->syncProductById($detail->product_id);
+        SyncAiProductJob::dispatch($detail->product_id)->afterCommit();
     }
 
     public function updated(WarehouseDetail $detail): void
@@ -21,14 +17,14 @@ class WarehouseDetailObserver
         $originalProductId = $detail->getOriginal('product_id');
 
         if ($originalProductId && (string) $originalProductId !== (string) $detail->product_id) {
-            $this->sync->syncProductById($originalProductId);
+            SyncAiProductJob::dispatch($originalProductId)->afterCommit();
         }
 
-        $this->sync->syncProductById($detail->product_id);
+        SyncAiProductJob::dispatch($detail->product_id)->afterCommit();
     }
 
     public function deleted(WarehouseDetail $detail): void
     {
-        $this->sync->syncProductById($detail->product_id);
+        SyncAiProductJob::dispatch($detail->product_id)->afterCommit();
     }
 }

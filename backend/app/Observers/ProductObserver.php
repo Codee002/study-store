@@ -2,15 +2,11 @@
 
 namespace App\Observers;
 
+use App\Jobs\SyncAiProductJob;
 use App\Models\Product;
-use App\Services\AiProductSyncService;
 
 class ProductObserver
 {
-    public function __construct(private AiProductSyncService $sync)
-    {
-    }
-
     public function created(Product $product): void
     {
         $this->push($product);
@@ -23,11 +19,11 @@ class ProductObserver
 
     public function deleted(Product $product): void
     {
-        $this->sync->syncProductById($product->id);
+        SyncAiProductJob::dispatch($product->id)->afterCommit();
     }
 
     protected function push(Product $p): void
     {
-        $this->sync->syncProductById($p->id);
+        SyncAiProductJob::dispatch($p->id)->afterCommit();
     }
 }
