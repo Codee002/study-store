@@ -699,6 +699,13 @@ onMounted(fetchOrder);
   color: var(--font-color);
 }
 
+.btn-main{
+    background: var(--main-color);
+  border: 1px solid var(--hover-border-color);
+  color: var(--dark);
+  font-weight: 700
+}
+
 .panel {
   background: rgba(255, 255, 255, 0.02);
   border: 1px solid var(--border-color);

@@ -135,7 +135,7 @@
       <div class="reply-modal">
         <div class="d-flex align-items-start justify-content-between gap-2 mb-3">
           <div>
-            <h5 class="mb-1">{{ replyModal.item?.reply ? "Sua phan hoi" : "Phan hoi danh gia" }}</h5>
+            <h5 class="mb-1">{{ replyModal.item?.reply ? "Sửa phản hồi" : "Phản hồi đánh giá" }}</h5>
             <div class="small opacity-75">{{ replyModal.item?.product_name || "" }}</div>
           </div>
           <button class="btn btn-sm btn-outline-secondary" type="button" @click="closeReplyModal">

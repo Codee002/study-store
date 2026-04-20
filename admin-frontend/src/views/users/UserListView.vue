@@ -112,7 +112,7 @@
                   </td>
                   <td class="text-end pe-3">
                     <button
-                      class="btn btn-sm btn-outline-secondary me-2"
+                      class="btn btn-sm btn-secondary me-2"
                       @click="loadUserDetail(u.id)"
                       :disabled="loading && selectedUserId === u.id"
                     >
@@ -120,7 +120,7 @@
                     </button>
                     <button
                       class="btn btn-sm"
-                      :class="u.status === 'actived' ? 'btn-outline-danger' : 'btn-outline-success'"
+                      :class="u.status === 'actived' ? 'btn-danger' : 'btn-success'"
                       @click="toggleStatus(u)"
                       :disabled="statusChangingId === u.id"
                     >
@@ -277,11 +277,11 @@
                     </div>
                     <div class="col-12 d-flex justify-content-end">
                       <button
-                        class="btn btn-primary"
+                        class="btn btn-accent order-action-btn"
                         @click="onUpdateDealer"
                         :disabled="loading"
                       >
-                        <i class="fa-solid fa-check me-1"></i> Cập nhật đăng ký
+                         Cập nhật 
                       </button>
                     </div>
                   </div>
@@ -500,6 +500,22 @@ watch(page, async () => {
   white-space: nowrap;
   font-weight: 600;
 }
+
+.btn-accent {
+  background: var(--main-color);
+  border: 1px solid var(--hover-border-color);
+  color: var(--dark);
+}
+
+.btn-accent:hover {
+  filter: var(--brightness);
+}
+
+.order-action-btn {
+  font-weight: 700;
+}
+
+
 </style>
 
 

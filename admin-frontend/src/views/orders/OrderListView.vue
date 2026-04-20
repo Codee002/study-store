@@ -101,7 +101,7 @@
             </div>
 
             <div class="col-12 col-md-4 col-lg-2 d-flex gap-2 filter-actions">
-              <button class="btn btn-primary btn-sm flex-grow-1" @click="applyFilters">Áp dụng
+              <button class="btn btn-accent order-action-btn btn-sm flex-grow-1" @click="applyFilters">Áp dụng
               </button>
               <button class="btn btn-outline-secondary btn-sm" @click="resetFilters">
                 Làm mới
@@ -452,6 +452,22 @@ watch(page, fetchOrders);
 .filter-actions {
   align-self: end;
 }
+
+.btn-accent {
+  background: var(--main-color);
+  border: 1px solid var(--hover-border-color);
+  color: var(--dark);
+}
+
+.btn-accent:hover {
+  filter: var(--brightness);
+}
+
+.order-action-btn {
+  font-weight: 700;
+}
+
+
 
 @media (max-width: 991.98px) {
   .filter-actions {

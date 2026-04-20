@@ -247,7 +247,7 @@ async function fetchAllCategories() {
 
 async function fetchDiscount() {
   const res = await DiscountService.get(id);
-  const d = res?.data ?? res;
+  const d = res?.data?.discount ?? res?.discount ?? res?.data ?? res;
   const values = {
     category_id: d?.category_id != null ? String(d.category_id) : "",
     percent: d?.percent ?? "",
