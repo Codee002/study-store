@@ -296,10 +296,10 @@ class ChatboxService
         $order = $this->containsAny($normalized, [
             'don hang', 'don cua toi', 'don toi', 'xem don', 'kiem tra don', 'tra cuu don',
             'don gan nhat', 'order', 'van chuyen', 'giao hang', 'trang thai don', 'ma don',
-            'ma so don', 'shipping',
+            'ma so don', 'shipping', 'don'
         ]);
         $cart = $this->containsAny($normalized, [
-            'gio hang', 'cart', 'san pham da them', 'trong gio',
+            'gio hang', 'cart', 'san pham da them', 'trong gio', 'gio', 'xem gio', 'kiem tra gio', 'tra cuu gio',
         ]);
         $account = $this->containsAny($normalized, [
             'tai khoan', 'ho so', 'thong tin cua toi', 'thong tin tai khoan', 'hang thanh vien', 'tier',
@@ -340,12 +340,22 @@ class ChatboxService
             $query->where('id', $orderId);
         }
 
-        $orders = $query->limit(3)->get();
+        $orders = $query->get();
         if ($orders->isEmpty()) {
             return '- Khách hàng chưa có đơn hàng nào trong hệ thống.';
         }
 
-        return $orders->map(function (Order $order) {
+        $summaryLines = [
+            '- Tổng quan đơn hàng',
+            '  Tổng số đơn: ' . $orders->count(),
+            '  Chờ xác nhận: ' . $orders->where('status', 'pending')->count(),
+            '  Đang giao: ' . $orders->where('status', 'shipping')->count(),
+            '  Hoàn tất: ' . $orders->where('status', 'completed')->count(),
+            '  Đã hủy: ' . $orders->where('status', 'cancelled')->count(),
+            '  Bị từ chối: ' . $orders->where('status', 'rejected')->count(),
+        ];
+
+        $orderLines = $orders->map(function (Order $order) {
             $productSubtotal = (float) $order->orderDetails->sum(fn ($row) => ((float) $row->price) * ((int) $row->quantity));
             $discountTotal = (float) $order->orderDiscounts->sum(fn ($row) => (float) ($row->price ?? 0));
             $shippingFee = 30000.0;
@@ -375,6 +385,8 @@ class ChatboxService
 
             return implode("\n", $lines);
         })->implode("\n");
+
+        return implode("\n", $summaryLines) . "\n" . $orderLines;
     }
 
     private function extractRequestedOrderId(string $question): ?int
@@ -487,8 +499,10 @@ class ChatboxService
 
         $lines = ['- Giỏ hàng hiện tại'];
         $subtotal = 0.0;
-        foreach ($cart->cartDetails->take(6) as $detail) {
+        $totalItems = 0;
+        foreach ($cart->cartDetails as $detail) {
             $qty = max(1, (int) $detail->quantity);
+            $totalItems += $qty;
             $pricing = $this->resolveUnitPriceWithMinQty($detail->product?->prices, $tierId, $qty);
             $price = (float) ($pricing['unit_price'] ?? 0);
             $minQty = (int) ($pricing['min_quantity'] ?? 1);
@@ -503,6 +517,11 @@ class ChatboxService
             $lines[] = '  ' . ($detail->product?->name ?: 'Sản phẩm') . ' x' . $qty . $color . $priceText;
         }
         $lines[] = '  Tạm tính: ' . number_format($subtotal, 0, ',', '.') . ' đ';
+
+        array_splice($lines, 1, 0, [
+            '  Số dòng sản phẩm: ' . $cart->cartDetails->count(),
+            '  Tổng số lượng: ' . $totalItems,
+        ]);
 
         return implode("\n", $lines);
     }
@@ -766,4 +785,3 @@ class ChatboxService
         return implode("\n", $lines);
     }
 }
-

@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Jobs\LogAiEventJob;
 use Illuminate\Http\Client\Response;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Http;
@@ -177,12 +178,17 @@ class AiSearchClient
      */
     public function logEvent(string $userId, int $productId, string $action): void
     {
+        LogAiEventJob::dispatch($userId, $productId, $action, now()->toISOString())->afterCommit();
+    }
+
+    public function logEventNow(string $userId, int $productId, string $action, ?string $timestamp = null): void
+    {
         $this->guardEndpoint();
         $payload = [
             'user_id'    => $userId,
             'product_id' => (string) $productId,
             'action'     => $action, // view|cart|purchase
-            'ts'         => now()->toISOString(),
+            'ts'         => $timestamp ?? now()->toISOString(),
         ];
 
         try {
