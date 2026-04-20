@@ -29,21 +29,21 @@ class StoreDiscountRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'category_id.required' => 'Vui long chon danh muc',
-            'category_id.exists'   => 'Danh muc khong hop le',
-            'des.required'         => 'Vui long nhap mo ta khuyen mai',
-            'des.min'              => 'Mo ta khuyen mai toi thieu 2 ky tu',
-            'des.max'              => 'Mo ta khuyen mai toi da 255 ky tu',
-            'percent.required'     => 'Vui long nhap phan tram khuyen mai',
-            'percent.numeric'      => 'Phan tram khuyen mai phai la so',
-            'percent.min'          => 'Phan tram khuyen mai phai tu 1% den 100%',
-            'percent.max'          => 'Phan tram khuyen mai phai tu 1% den 100%',
-            'status.in'            => 'Trang thai khong hop le',
-            'start_at.required'    => 'Vui long chon ngay bat dau',
-            'start_at.date'        => 'Ngay bat dau khong hop le',
-            'end_at.required'      => 'Vui long chon ngay ket thuc',
-            'end_at.date'          => 'Ngay ket thuc khong hop le',
-            'end_at.after_or_equal'=> 'Ngay ket thuc phai lon hon hoac bang ngay bat dau',
+            'category_id.required' => 'Vui lòng chọn danh mục',
+            'category_id.exists'   => 'Danh mục không hợp lệ',
+            'des.required'         => 'Vui lòng nhập mô tả khuyến mãi',
+            'des.min'              => 'Mô tả khuyến mãi tối thiểu 2 ký tự',
+            'des.max'              => 'Mô tả khuyến mãi tối đa 255 ký tự',
+            'percent.required'     => 'Vui lòng nhập phần trăm khuyến mãi',
+            'percent.numeric'      => 'Phần trăm khuyến mãi phải là số',
+            'percent.min'          => 'Phần trăm khuyến mãi phải từ 1% đến 100%',
+            'percent.max'          => 'Phần trăm khuyến mãi phải từ 1% đến 100%',
+            'status.in'            => 'Trạng thái không hợp lệ',
+            'start_at.required'    => 'Vui lòng chọn ngày bắt đầu',
+            'start_at.date'        => 'Ngày bắt đầu không hợp lệ',
+            'end_at.required'      => 'Vui lòng chọn ngày kết thúc',
+            'end_at.date'          => 'Ngày kết thúc không hợp lệ',
+            'end_at.after_or_equal'=> 'Ngày kết thúc phải lớn hơn hoặc bằng ngày bắt đầu',
         ];
     }
 
@@ -69,7 +69,7 @@ class StoreDiscountRequest extends FormRequest
                 ->exists();
 
             if ($hasOverlap) {
-                $message = 'Danh muc nay da co khuyen mai trong khoang thoi gian da chon';
+                $message = 'Danh mục này đã có khuyến mãi trong khoảng thời gian đã chọn.';
                 $validator->errors()->add('start_at', $message);
                 $validator->errors()->add('end_at', $message);
             }
@@ -80,7 +80,7 @@ class StoreDiscountRequest extends FormRequest
     {
         throw new HttpResponseException(response()->json([
             'success' => false,
-            'message' => 'Loi xac thuc du lieu',
+            'message' => 'Lỗi xác thực dữ liệu',
             'errors'  => $validator->errors(),
         ], 422));
     }

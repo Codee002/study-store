@@ -26,12 +26,12 @@ class UpdatePaymentRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'name.required' => 'Vui long nhap ten phuong thuc thanh toan',
-            'name.min' => 'Ten phuong thuc thanh toan toi thieu 2 ky tu',
-            'name.max' => 'Ten phuong thuc thanh toan toi da 100 ky tu',
-            'name.unique' => 'Ten phuong thuc thanh toan da ton tai',
-            'status.required' => 'Vui long chon trang thai',
-            'status.in' => 'Trang thai khong hop le',
+            'name.required' => 'Vui lòng chọn tên phương thức thanh toán',
+            'name.min' => 'Tên phương thức thanh toán tối thiểu 2 ký tự',
+            'name.max' => 'Tên phương thức thanh toán tối đa 100 ký tự',
+            'name.unique' => 'Tên phương thức thanh toán đã tồn tại',
+            'status.required' => 'Vui lòng chọn trạng thái',
+            'status.in' => 'Trạng thái không hợp lệ',
         ];
     }
 
@@ -39,7 +39,7 @@ class UpdatePaymentRequest extends FormRequest
     {
         throw new HttpResponseException(response()->json([
             'success' => false,
-            'message' => 'Du lieu khong hop le',
+            'message' => 'Dữ liệu không hợp lệ',
             'errors' => $validator->errors(),
         ], 422));
     }
