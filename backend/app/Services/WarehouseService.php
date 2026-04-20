@@ -1,11 +1,10 @@
 <?php
 namespace App\Services;
 
-use App\Models\Product;
 use App\Models\ReceiptDetail;
-use App\Models\Warehouse;
 use App\Models\WarehouseDetail;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Carbon;
 
 class WarehouseService
 {
@@ -75,6 +74,73 @@ class WarehouseService
     }
 
     /**
+     * Tăng tồn kho cho nhiều dòng trong cùng một đợt approve
+     *
+     * @param  iterable<int, ReceiptDetail>  $details
+     */
+    public function increaseMany(int $warehouseId, iterable $details, string $defaultStatus = 'disabled'): void
+    {
+        $groupedItems = [];
+
+        foreach ($details as $detail) {
+            $quantity = (int) $detail->quantity;
+            if ($quantity <= 0) {
+                throw new \InvalidArgumentException('Số lượng phải lớn hơn 0');
+            }
+
+            $productId = (int) $detail->product_id;
+            $colorId   = $detail->color_id ? (int) $detail->color_id : null;
+            $lookupKey = $this->buildLookupKey($productId, $colorId);
+
+            if (! isset($groupedItems[$lookupKey])) {
+                $groupedItems[$lookupKey] = [
+                    'product_id' => $productId,
+                    'color_id'   => $colorId,
+                    'quantity'   => 0,
+                ];
+            }
+
+            $groupedItems[$lookupKey]['quantity'] += $quantity;
+        }
+
+        if ($groupedItems === []) {
+            return;
+        }
+
+        $existingDetails = $this->lockExistingDetails($warehouseId, array_values($groupedItems))
+            ->keyBy(fn (WarehouseDetail $detail) => $this->buildLookupKey((int) $detail->product_id, $detail->color_id ? (int) $detail->color_id : null));
+
+        $insertRows = [];
+        $now = Carbon::now();
+
+        foreach ($groupedItems as $lookupKey => $item) {
+            /** @var WarehouseDetail|null $existingDetail */
+            $existingDetail = $existingDetails->get($lookupKey);
+
+            if ($existingDetail) {
+                WarehouseDetail::query()
+                    ->whereKey($existingDetail->id)
+                    ->increment('quantity', $item['quantity']);
+                continue;
+            }
+
+            $insertRows[] = [
+                'warehouse_id' => $warehouseId,
+                'product_id'   => $item['product_id'],
+                'color_id'     => $item['color_id'],
+                'quantity'     => $item['quantity'],
+                'status'       => $defaultStatus,
+                'created_at'   => $now,
+                'updated_at'   => $now,
+            ];
+        }
+
+        if ($insertRows !== []) {
+            WarehouseDetail::query()->insert($insertRows);
+        }
+    }
+
+    /**
      * Giảm tồn kho.
      */
     public function decrease(int $warehouseId, int $productId, ?int $colorId, int $quantity): WarehouseDetail
@@ -124,6 +190,38 @@ class WarehouseService
             ->where('warehouse_id', $warehouseId)
             ->sum('quantity');
         return $total;
+    }
+
+    /**
+     * @param  array<int, array{product_id:int,color_id:?int,quantity:int}>  $items
+     * @return Collection<int, WarehouseDetail>
+     */
+    protected function lockExistingDetails(int $warehouseId, array $items): Collection
+    {
+        $query = WarehouseDetail::query()
+            ->select(['id', 'product_id', 'color_id'])
+            ->where('warehouse_id', $warehouseId)
+            ->where(function ($outerQuery) use ($items) {
+                foreach ($items as $item) {
+                    $outerQuery->orWhere(function ($detailQuery) use ($item) {
+                        $detailQuery->where('product_id', $item['product_id']);
+
+                        if (is_null($item['color_id'])) {
+                            $detailQuery->whereNull('color_id');
+                        } else {
+                            $detailQuery->where('color_id', $item['color_id']);
+                        }
+                    });
+                }
+            })
+            ->lockForUpdate();
+
+        return $query->get();
+    }
+
+    protected function buildLookupKey(int $productId, ?int $colorId): string
+    {
+        return $productId . ':' . ($colorId ?? 'null');
     }
 
 }

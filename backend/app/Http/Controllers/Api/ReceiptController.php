@@ -233,13 +233,7 @@ class ReceiptController extends Controller
 
                 // áp tồn kho
                 $warehouseId = (int) $receipt->warehouse_id;
-                foreach ($receipt->receiptDetails as $d) {
-                    $productId = $d->product_id;
-                    $colorId   = $d->color_id ? $d->color_id : null;
-                    $qty       = $d->quantity;
-                    // Sản phẩm mới nhập lần đầu chưa có giá bán nên để disabled mặc định
-                    $stockService->increase($warehouseId, $productId, $colorId, $qty, 'disabled');
-                }
+                $stockService->increaseMany($warehouseId, $receipt->receiptDetails, 'disabled');
 
                 // đổi trạng thái phiếu
                 $receipt->status = 'completed';
