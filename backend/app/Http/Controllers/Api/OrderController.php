@@ -891,11 +891,11 @@ class OrderController extends Controller
                     ->first();
 
                 if (! $lockedOrder) {
-                    throw new \InvalidArgumentException('Khong tim thay don hang');
+                    throw new \InvalidArgumentException('Không tìm thấy đơn hàng');
                 }
 
                 if ((string) $lockedOrder->status !== 'pending') {
-                    throw new \RuntimeException('Chi co the huy don o trang thai dang duyet');
+                    throw new \RuntimeException('Chỉ có thể hủy đơn ở trạng thái đang duyệt');
                 }
 
                 $lockedOrder->update(['status' => 'cancelled']);
@@ -946,11 +946,11 @@ class OrderController extends Controller
                     ->first();
 
                 if (! $lockedOrder) {
-                    throw new \InvalidArgumentException('Khong tim thay don hang');
+                    throw new \InvalidArgumentException('Không tìm thấy đơn hàng');
                 }
 
                 if ((string) $lockedOrder->status !== 'shipping') {
-                    throw new \RuntimeException('Chi co the xac nhan da nhan hang khi don dang giao');
+                    throw new \RuntimeException('Chỉ có thể xác nhận đã nhận hàng khi đơn đang giao');
                 }
 
                 $lockedOrder->update(['status' => 'completed']);

@@ -6,7 +6,6 @@ use App\Http\Requests\Discount\StoreDiscountRequest;
 use App\Http\Requests\Discount\UpdateDiscountRequest;
 use App\Models\Discount;
 use App\Models\Order;
-use App\Models\OrderDiscount;
 use App\Models\Payment;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -406,11 +405,7 @@ class DiscountController extends Controller
                     return;
                 }
 
-                // Chặn xóa nếu đã gắn với đơn hàng bất kỳ
-                $hasOrder = OrderDiscount::query()
-                    ->where('discount_id', $discount->id)
-                    ->exists();
-                if ($hasOrder) {
+                if ($discount->orderDiscounts()->count() > 0) {
                     throw new \RuntimeException('Khuyến mãi đã được áp dụng vào đơn hàng, không thể xóa');
                 }
 

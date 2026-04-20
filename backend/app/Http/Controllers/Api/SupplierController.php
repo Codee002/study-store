@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Supplier\StoreSupplierRequest;
 use App\Http\Requests\Supplier\UpdateSupplierRequest;
-use App\Models\Receipt;
 use App\Models\Supplier;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -193,11 +192,7 @@ class SupplierController extends Controller
                     return;
                 }
 
-                // Chặn xóa nếu đã có phiếu nhập thuộc nhà cung cấp này
-                $hasReceipt = Receipt::query()
-                    ->where('supplier_id', $supplier->id)
-                    ->exists();
-                if ($hasReceipt) {
+                if ($supplier->receipts()->count() > 0) {
                     throw new \RuntimeException('Nhà cung cấp đã có phiếu nhập, không thể xoá');
                 }
 

@@ -195,7 +195,7 @@ class CategoryController extends Controller
                     return;
                 }
 
-                if ($category->products()->exists()) {
+                if ($category->products()->count() > 0) {
                     throw new \RuntimeException('Danh mục đang có sản phẩm, không thể xóa');
                 }
 
