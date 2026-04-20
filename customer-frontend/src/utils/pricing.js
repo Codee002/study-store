@@ -29,7 +29,22 @@ export function pickFirstMinQtyRow(prices = [], minQty = 1) {
 }
 
 export function getUserTierId(currentUser) {
-  return currentUser?.tier_id ?? currentUser?.profile?.tier ?? null;
+  if (!currentUser) return null;
+
+  const dealerTierId =
+    currentUser?.dealer_profile?.status === "accepted"
+      ? currentUser?.dealer_profile?.tier?.id ?? currentUser?.dealer_profile?.tier_id ?? null
+      : currentUser?.dealerProfile?.status === "accepted"
+        ? currentUser?.dealerProfile?.tier?.id ?? currentUser?.dealerProfile?.tier_id ?? null
+        : null;
+
+  return (
+    currentUser?.effective_tier_id ??
+    dealerTierId ??
+    currentUser?.tier_id ??
+    currentUser?.profile?.tier ??
+    null
+  );
 }
 
 export function getUserTierRow(prices, currentUser) {
@@ -101,4 +116,3 @@ export function getAppliedPriceRow(prices = [], currentUser = null, quantity = 1
 
   return selected;
 }
-

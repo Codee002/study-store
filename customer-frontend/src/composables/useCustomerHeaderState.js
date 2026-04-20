@@ -59,6 +59,12 @@ function normalizeUserPayload(res) {
     ...meUser,
     name: meUser?.name || "Guest",
     avatar: meUser?.avatar || meUser?.profile?.avatar || "/default-user-avatar.svg",
+    effective_tier_id:
+      meUser?.effective_tier_id ??
+      (meUser?.dealerProfile?.status === "accepted" ? meUser?.dealerProfile?.tier_id ?? meUser?.dealerProfile?.tier?.id ?? null : null) ??
+      meUser?.tier_id ??
+      meUser?.profile?.tier ??
+      null,
     tier_id: meUser?.tier_id ?? meUser?.profile?.tier ?? null,
     profile: meUser?.profile ?? null,
   };
