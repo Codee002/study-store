@@ -410,11 +410,12 @@ async function send() {
     });
 
     if (res?.data) {
+      const mapped = mapMessage(res.data);
       const idx = messages.value.findIndex((m) => m.id === optimisticId);
       if (idx !== -1) {
-        messages.value[idx] = mapMessage(res.data);
+        messages.value[idx] = mapped;
       } else {
-        messages.value.push(mapMessage(res.data));
+        upsertMessage(mapped);
       }
     }
 
@@ -502,15 +503,16 @@ function stopRealtime() {
 
 function handleIncomingMessage(event) {
   if (!event?.conversation_id) return;
+  if (String(event.conversation_id) !== String(conversation.value?.id)) return;
   if (event.user_id === currentUserId.value) {
     messages.value = messages.value.filter((m) => m.status !== "sending");
-    return;
   }
-  if (String(event.conversation_id) !== String(conversation.value?.id)) return;
   const normalized = mapIncoming(event);
   upsertMessage(normalized);
   nextTick(scrollToBottom);
-  syncConversationRead(conversation.value?.id);
+  if (event.user_id !== currentUserId.value) {
+    syncConversationRead(conversation.value?.id);
+  }
 }
 
 function startRealtime() {

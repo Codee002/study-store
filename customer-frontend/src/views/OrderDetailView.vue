@@ -298,7 +298,7 @@
                 <div class="d-grid gap-2 mt-3">
                   <button
                     v-if="canCancel"
-                    class="btn btn-outline-danger"
+                    class="btn btn-danger"
                     type="button"
                     :disabled="cancelling"
                     @click="cancelOrder"

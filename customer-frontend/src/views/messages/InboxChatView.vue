@@ -393,7 +393,13 @@ async function send() {
     const res = await MessageService.sendMessage(conversationId, { content, files: optimisticFiles.map((item) => item.file) });
     messages.value = messages.value.filter((item) => item.id !== optimistic.id);
     if (res?.data) {
-      messages.value.push(mapMessage(res.data));
+      const mapped = mapMessage(res.data);
+      const existingIdx = messages.value.findIndex((item) => String(item.id) === String(mapped.id));
+      if (existingIdx === -1) {
+        messages.value.push(mapped);
+      } else {
+        messages.value[existingIdx] = mapped;
+      }
       updateConversationFromEvent({ ...res.data, conversation_id: conversationId });
     }
     await scrollToLatest();
