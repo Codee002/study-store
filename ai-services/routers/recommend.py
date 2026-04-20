@@ -11,6 +11,11 @@ def recommend_content(req: RecommendRequest):
     return recommend_service.recommend_content(req)
 
 
+@router.post("/hybrid")
+def recommend_hybrid(req: RecommendRequest):
+    return recommend_service.recommend_hybrid(req)
+
+
 @router.post("/cf")
 def recommend_cf(req: RecommendRequest):
     return recommend_service.recommend_cf(req)

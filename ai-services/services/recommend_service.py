@@ -29,7 +29,7 @@ def log_event(event: Event):
     return {"stored": True}
 
 
-def recommend_content(req: RecommendRequest):
+def recommend_hybrid(req: RecommendRequest):
     candidate_k = max(req.top_k * 4, 40)
     content_results = _recommend_content_candidates(req, candidate_k)
     cf_results = _recommend_cf_candidates(req, candidate_k)
@@ -75,6 +75,10 @@ def recommend_content(req: RecommendRequest):
         reverse=True,
     )
     return {"results": results[: req.top_k]}
+
+
+def recommend_content(req: RecommendRequest):
+    return recommend_hybrid(req)
 
 
 def recommend_cf(req: RecommendRequest):
