@@ -11,6 +11,7 @@ use App\Models\Message;
 use App\Models\MessageMedia;
 use App\Models\MessageProduct;
 use App\Models\MessageRead;
+use App\Models\Tier;
 use App\Models\User;
 use App\Services\ChatboxService;
 use Illuminate\Http\Request;
@@ -656,10 +657,10 @@ class MessageController extends Controller
             : $rows->where('tier_id', $tierId)->values();
 
         if ($tierRows->isEmpty()) {
-            $retailRows = $rows->filter(function ($row) {
-                $tierCode = strtoupper((string) ($row->tier->code ?? ''));
-                return $tierCode === 'RETAIL';
-            })->values();
+            $defaultTierId = (int) (Tier::query()->where('default', 1)->value('id') ?? 0);
+            $retailRows = $defaultTierId > 0
+                ? $rows->where('tier_id', $defaultTierId)->values()
+                : collect();
 
             if ($retailRows->isNotEmpty()) {
                 $tierRows = $retailRows;

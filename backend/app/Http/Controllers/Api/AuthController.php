@@ -19,8 +19,33 @@ class AuthController extends Controller
         $user->setAttribute('avatar', $user->profile?->avatar);
         $user->setAttribute('name', $user->profile?->name);
         $user->setAttribute('phone', $user->profile?->phone);
+        $user->setAttribute('effective_tier_id', $this->resolveEffectiveTierId($user));
 
         return $user;
+    }
+
+    private function resolveEffectiveTierId(User $user): ?int
+    {
+        $user->loadMissing(['dealerProfile', 'profile']);
+
+        $dealerProfile = $user->dealerProfile;
+        if (
+            $dealerProfile
+            && (string) ($dealerProfile->status ?? '') === 'accepted'
+            && (int) ($dealerProfile->tier_id ?? 0) > 0
+        ) {
+            return (int) $dealerProfile->tier_id;
+        }
+
+        if ((int) ($user->tier_id ?? 0) > 0) {
+            return (int) $user->tier_id;
+        }
+
+        if ((int) ($user->profile?->tier ?? 0) > 0) {
+            return (int) $user->profile->tier;
+        }
+
+        return null;
     }
 
     public function registerCustomer(RegisterCustomerRequest $request)
@@ -105,7 +130,7 @@ class AuthController extends Controller
         }
 
         $token = $user->createToken('customer_token')->plainTextToken;
-        $user->load(['profile', 'tier']);
+        $user->load(['profile', 'tier', 'dealerProfile.tier']);
         $this->appendProfileMeta($user);
 
         return response()->json([
@@ -160,7 +185,7 @@ class AuthController extends Controller
         }
 
         $token = $user->createToken('admin_token')->plainTextToken;
-        $user->load(['profile', 'tier']);
+        $user->load(['profile', 'tier', 'dealerProfile.tier']);
         $this->appendProfileMeta($user);
 
         return response()->json([
@@ -191,7 +216,7 @@ class AuthController extends Controller
             ], 423);
         }
 
-        $user->load(['profile', 'tier']);
+        $user->load(['profile', 'tier', 'dealerProfile.tier']);
         $this->appendProfileMeta($user);
 
         return response()->json([

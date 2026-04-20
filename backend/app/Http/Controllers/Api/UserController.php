@@ -6,6 +6,7 @@ use App\Models\Tier;
 use App\Models\User;
 use App\Services\NotificationService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 
@@ -162,11 +163,8 @@ class UserController extends Controller
                 }
             });
 
-            $user->load([
-                'profile:id,user_id,name,phone,gender,birthday,avatar',
-                'tier:id,name,code,status',
-                'dealerProfile.tier:id,name,code,status',
-            ]);
+            $user = $this->loadUserForAdmin($id);
+            $this->flushTierRelatedCaches();
 
             return response()->json([
                 'success' => true,
@@ -211,14 +209,17 @@ class UserController extends Controller
                 if ((string) $validated['status'] === 'accepted' && ! empty($validated['tier_id'])) {
                     $user->tier_id = $validated['tier_id'];
                     $user->save();
+                    return;
+                }
+
+                if ((string) $validated['status'] !== 'accepted') {
+                    $user->tier_id = null;
+                    $user->save();
                 }
             });
 
-            $user->load([
-                'profile:id,user_id,name,phone,gender,birthday,avatar',
-                'tier:id,name,code,status',
-                'dealerProfile.tier:id,name,code,status',
-            ]);
+            $user = $this->loadUserForAdmin($id);
+            $this->flushTierRelatedCaches();
 
             return response()->json([
                 'success' => true,
@@ -258,12 +259,7 @@ class UserController extends Controller
                 $user->tokens()->delete();
             }
 
-            $user->load([
-                'profile:id,user_id,name,phone,gender,birthday,avatar',
-                'tier:id,name,code,status',
-                'dealerProfile.tier:id,name,code,status',
-                'deliveryInfos:id,user_id,name,phone,address,default',
-            ]);
+            $user = $this->loadUserForAdmin($id, true);
 
             if ($oldStatus !== 'disabled' && (string) $validated['status'] === 'disabled') {
                 $notificationService->notifyAccountLocked($user);
@@ -281,6 +277,31 @@ class UserController extends Controller
                 'error'   => $e->getMessage(),
             ], 500);
         }
+    }
+
+    private function loadUserForAdmin(int $id, bool $includeExtras = false): ?User
+    {
+        $relations = [
+            'profile:id,user_id,name,phone,gender,birthday,avatar',
+            'tier:id,name,code,status',
+            'dealerProfile.tier:id,name,code,status',
+        ];
+
+        if ($includeExtras) {
+            $relations[] = 'deliveryInfos:id,user_id,name,phone,address,default';
+        }
+
+        return User::query()->with($relations)->find($id);
+    }
+
+    private function flushTierRelatedCaches(): void
+    {
+        Cache::tags(['products'])->flush();
+        Cache::tags(['recommend'])->flush();
+        Cache::tags(['orders'])->flush();
+        Cache::tags(['warehouses'])->flush();
+        Cache::tags(['evaluates'])->flush();
+        Cache::tags(['tiers'])->flush();
     }
 
     private function transformUser(User $user, bool $includeExtras = false): array
@@ -371,4 +392,3 @@ class UserController extends Controller
         return null;
     }
 }
-

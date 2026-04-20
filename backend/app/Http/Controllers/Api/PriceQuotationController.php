@@ -62,12 +62,10 @@ class PriceQuotationController extends Controller
                 ], 401);
             }
 
-            $user->loadMissing(['dealerProfile', 'tier']);
-            $tierId = (int) ($user->tier_id ?: ($user->dealerProfile?->tier_id ?: 0));
+            $tierId = $this->resolveEffectiveTierId($user);
 
             if ($tierId <= 0) {
-                $tierId = (int) (Tier::query()->where('code', 'RETAIL')->value('id')
-                    ?: Tier::query()->where('default', 1)->value('id'));
+                $tierId = (int) (Tier::query()->where('default', 1)->value('id') ?: 0);
             }
 
             if ($tierId <= 0) {
@@ -531,8 +529,7 @@ class PriceQuotationController extends Controller
         $tierId = (int) ($user->tier_id ?: ($user->dealerProfile?->tier_id ?: 0));
 
         if ($tierId <= 0) {
-            $tierId = (int) (Tier::query()->where('code', 'RETAIL')->value('id')
-                ?: Tier::query()->where('default', 1)->value('id'));
+            $tierId = (int) (Tier::query()->where('default', 1)->value('id') ?: 0);
         }
 
         return max(0, $tierId);

@@ -168,7 +168,7 @@ class ProductController extends Controller
         $items = Cache::tags(['products', 'recommend'])
             ->remember($cacheKey, 600, function () use ($ai, $userId, $perPage, $recentIds) {
                 try {
-                    $results = $ai->recommendContent($userId, $perPage, $recentIds);
+                    $results = $ai->recommendHybrid($userId, $perPage, $recentIds);
                     Log::info('[RECOMMEND] ai results', [
                         'user_id' => $userId,
                         'recent_ids' => $recentIds,
@@ -682,16 +682,11 @@ class ProductController extends Controller
             $status     = $request->query('status', null);
 
             $user       = $request->user();
-            $userTierId = $user?->tier_id;
+            $userTierId = $this->resolveEffectiveTierId($user);
 
             // retail tier id
             $retailTierId = Cache::tags(['tiers'])->remember('tiers:retail:id', 3600, function () {
-                $retailId = Tier::query()->where('code', 'RETAIL')->value('id');
-                if ($retailId) {
-                    return $retailId;
-                }
                 return Tier::query()->where('default', 1)->value('id');
-
             });
 
             // tierIds cần lấy price
@@ -803,14 +798,9 @@ class ProductController extends Controller
             $status = $request->query('status', 'actived');
 
             $user       = $request->user();
-            $userTierId = $user?->tier_id;
+            $userTierId = $this->resolveEffectiveTierId($user);
 
             $retailTierId = Cache::tags(['tiers'])->remember('tiers:retail:id', 3600, function () {
-                $retailId = Tier::query()->where('code', 'RETAIL')->value('id');
-                if ($retailId) {
-                    return $retailId;
-                }
-
                 return Tier::query()->where('default', 1)->value('id');
             });
 
@@ -1338,6 +1328,34 @@ class ProductController extends Controller
                 ];
             })->values(),
         ];
+    }
+
+    private function resolveEffectiveTierId($user): ?int
+    {
+        if (! $user) {
+            return null;
+        }
+
+        $user->loadMissing(['dealerProfile', 'profile']);
+
+        $dealerProfile = $user->dealerProfile;
+        if (
+            $dealerProfile
+            && (string) ($dealerProfile->status ?? '') === 'accepted'
+            && (int) ($dealerProfile->tier_id ?? 0) > 0
+        ) {
+            return (int) $dealerProfile->tier_id;
+        }
+
+        if ((int) ($user->tier_id ?? 0) > 0) {
+            return (int) $user->tier_id;
+        }
+
+        if ((int) ($user->profile?->tier ?? 0) > 0) {
+            return (int) $user->profile->tier;
+        }
+
+        return null;
     }
 
 }
