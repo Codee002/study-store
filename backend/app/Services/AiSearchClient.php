@@ -132,7 +132,7 @@ class AiSearchClient
         return $results;
     }
 
-    public function recommendContent(string $userId, int $topK = 24, array $recentProductIds = []): array
+    public function recommendHybrid(string $userId, int $topK = 24, array $recentProductIds = []): array
     {
         $this->guardEndpoint();
         $payload = [
@@ -144,10 +144,10 @@ class AiSearchClient
         try {
             /** @var Response $resp */
             $resp = $this->request()
-                ->post("{$this->base}/recommend/content", $payload);
+                ->post("{$this->base}/recommend/hybrid", $payload);
         } catch (Throwable $e) {
-            Log::error('[AI] recommend content failed (client)', [
-                'endpoint' => "{$this->base}/recommend/content",
+            Log::error('[AI] recommend hybrid failed (client)', [
+                'endpoint' => "{$this->base}/recommend/hybrid",
                 'user_id'  => $userId,
                 'top_k'    => $topK,
                 'error'    => $e->getMessage(),
@@ -158,13 +158,18 @@ class AiSearchClient
         $body = $resp->throw()->json();
         $results = $body['results'] ?? [];
 
-        Log::info('[AI] recommend content', [
+        Log::info('[AI] recommend hybrid', [
             'user_id' => $userId,
             'top_k'   => $topK,
             'count'   => count($results),
         ]);
 
         return $results;
+    }
+
+    public function recommendContent(string $userId, int $topK = 24, array $recentProductIds = []): array
+    {
+        return $this->recommendHybrid($userId, $topK, $recentProductIds);
     }
 
     /**

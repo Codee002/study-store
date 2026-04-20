@@ -14,6 +14,7 @@ use App\Models\Order;
 use App\Models\OrderDetail;
 use App\Models\OrderDiscount;
 use App\Models\Product;
+use App\Models\Tier;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
@@ -606,10 +607,10 @@ class ChatboxService
             : $rows->where('tier_id', $tierId)->values();
 
         if ($tierRows->isEmpty()) {
-            $retailRows = $rows->filter(function ($row) {
-                $tierCode = strtoupper((string) ($row->tier->code ?? ''));
-                return $tierCode === 'RETAIL';
-            })->values();
+            $defaultTierId = (int) (Tier::query()->where('default', 1)->value('id') ?? 0);
+            $retailRows = $defaultTierId > 0
+                ? $rows->where('tier_id', $defaultTierId)->values()
+                : collect();
 
             if ($retailRows->isNotEmpty()) {
                 $tierRows = $retailRows;
