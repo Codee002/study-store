@@ -150,7 +150,13 @@
                                 </div>
                               </div>
 
-                              <div class="flex-grow-1">
+                              <div class="flex-grow-1 product-select-stack">
+                                <input
+                                  v-model.trim="productSearchTerms[idx]"
+                                  type="text"
+                                  class="form-control bg-transparent mb-2"
+                                  placeholder="Tìm theo tên sản phẩm..."
+                                />
                                 <Field
                                   :name="`items[${idx}].product_id`"
                                   v-slot="{ field, meta, errors, handleChange }"
@@ -179,7 +185,7 @@
                                       -- Chọn sản phẩm --
                                     </option>
                                     <option
-                                      v-for="p in products"
+                                      v-for="p in getFilteredProducts(idx)"
                                       :key="p.id"
                                       :value="String(p.id)"
                                     >
@@ -456,7 +462,6 @@ const router = useRouter();
 const suppliers = ref([]);
 const warehouses = ref([]);
 const products = ref([]);
-
 const initialValues = {
   supplier_id: "",
   warehouse_id: "",
@@ -469,6 +474,7 @@ const initialValues = {
     },
   ],
 };
+const productSearchTerms = ref(initialValues.items.map(() => ""));
 
 const purchaseHints = ref(
   initialValues.items.map(() => ({ loading: false, data: null, error: null }))
@@ -536,6 +542,7 @@ function addRow(setFieldValue, values) {
   setFieldValue("items", [...values.items, makeRow()]);
   purchaseHints.value.push({ loading: false, data: null, error: null });
   stockHints.value.push({ loading: false, data: null, error: null });
+  productSearchTerms.value.push("");
 }
 
 function removeRow(rowKey, setFieldValue, values) {
@@ -561,6 +568,7 @@ function resetAll(setFieldValue) {
       error: null,
     },
   ];
+  productSearchTerms.value = initialValues.items.map(() => "");
 }
 
 function findProductById(productId) {
@@ -579,6 +587,25 @@ function getProductThumb(productId) {
   const first = p?.images?.[0]?.url || "";
 
   return first || "";
+}
+
+function ensureProductSearchTerm(idx) {
+  while (productSearchTerms.value.length <= idx) {
+    productSearchTerms.value.push("");
+  }
+}
+
+function getFilteredProducts(idx) {
+  ensureProductSearchTerm(idx);
+  const keyword = String(productSearchTerms.value[idx] || "").trim().toLowerCase();
+
+  if (!keyword) {
+    return products.value;
+  }
+
+  return products.value.filter((product) =>
+    String(product?.name || "").toLowerCase().includes(keyword)
+  );
 }
 
 function ensurePurchaseHint(idx) {
@@ -696,6 +723,10 @@ function onRemoveRow(remove, idx) {
   if (!stockHints.value.length) {
     stockHints.value.push({ loading: false, data: null, error: null });
   }
+  productSearchTerms.value.splice(idx, 1);
+  if (!productSearchTerms.value.length) {
+    productSearchTerms.value.push("");
+  }
 }
 
 function getRowError(errors, idx, field) {
@@ -764,8 +795,29 @@ onMounted(async () => {
   warehouses.value = (
     await WarehouseService.getAll({ per_page: 200 })
   ).data.items;
-  products.value = (await ProductService.getAll({ per_page: 200 })).data.items;
+  products.value = await fetchAllProducts();
 });
+
+async function fetchAllProducts() {
+  const merged = [];
+  let page = 1;
+  let lastPage = 1;
+
+  do {
+    const res = await ProductService.getAll({ per_page: 50, page });
+    const items = res?.data?.items ?? [];
+    const meta = res?.data?.meta ?? {};
+
+    if (Array.isArray(items) && items.length) {
+      merged.push(...items);
+    }
+
+    lastPage = Number(meta?.last_page || page);
+    page += 1;
+  } while (page <= lastPage);
+
+  return merged;
+}
 </script>
 
 <style scoped>
@@ -805,5 +857,14 @@ onMounted(async () => {
 .thumb-placeholder {
   opacity: 0.6;
   font-size: 1.1rem;
+}
+
+.product-select-stack {
+  min-width: 0;
+}
+
+.product-select-stack .form-control,
+.product-select-stack .form-select {
+  width: 100%;
 }
 </style>

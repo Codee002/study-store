@@ -104,7 +104,7 @@
                     </div>
                   </td>
 
-                  <!-- Product count (fake for now) -->
+                  <!-- Product count -->
                   <td class="text-end">
                     <span class="badge count-badge">
                       {{ r?.items_count ?? 0 }}

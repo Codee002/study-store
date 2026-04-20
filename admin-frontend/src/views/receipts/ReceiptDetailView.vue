@@ -198,21 +198,19 @@
               >
                 <button
                   type="button"
-                  class="btn btn-outline-success me-2"
+                  class="btn btn-success me-2"
                   :disabled="actionLoading"
                   @click="approveReceipt"
                 >
-                  <i class="fa-solid fa-check me-1"></i>
                   {{ actionLoading ? "Đang xử lý..." : "Duyệt phiếu" }}
                 </button>
 
                 <button
                   type="button"
-                  class="btn btn-outline-danger"
+                  class="btn btn-danger"
                   :disabled="actionLoading"
                   @click="rejectReceipt"
                 >
-                  <i class="fa-solid fa-xmark me-1"></i>
                   {{ actionLoading ? "Đang xử lý..." : "Từ chối" }}
                 </button>
               </div>
