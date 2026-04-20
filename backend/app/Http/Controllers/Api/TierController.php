@@ -5,7 +5,6 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Tier\StoreTierRequest;
 use App\Http\Requests\Tier\UpdateTierRequest;
 use App\Models\Tier;
-use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -29,29 +28,28 @@ class TierController extends Controller
                 'page'     => $page,
             ]));
 
-            $payload = Cache::tags(['tiers'])->remember($cacheKey, 300
-                , function () use ($q, $perPage) {
-                    $query = Tier::query();
+            $payload = Cache::tags(['tiers'])->remember($cacheKey, 300, function () use ($q, $perPage) {
+                $query = Tier::query();
 
-                    if ($q !== '') {
-                        $query->where(function ($w) use ($q) {
-                            $w->where('name', 'like', '%' . $q . '%')
-                                ->orWhere('code', 'like', '%' . $q . '%');
-                        });
-                    }
+                if ($q !== '') {
+                    $query->where(function ($w) use ($q) {
+                        $w->where('name', 'like', '%' . $q . '%')
+                            ->orWhere('code', 'like', '%' . $q . '%');
+                    });
+                }
 
-                    $paginator = $query->orderByDesc('id')->paginate($perPage);
+                $paginator = $query->orderByDesc('id')->paginate($perPage);
 
-                    return [
-                        'items' => $paginator->items(),
-                        'meta'  => [
-                            'current_page' => $paginator->currentPage(),
-                            'per_page'     => $paginator->perPage(),
-                            'total'        => $paginator->total(),
-                            'last_page'    => $paginator->lastPage(),
-                        ],
-                    ];
-                });
+                return [
+                    'items' => $paginator->items(),
+                    'meta'  => [
+                        'current_page' => $paginator->currentPage(),
+                        'per_page'     => $paginator->perPage(),
+                        'total'        => $paginator->total(),
+                        'last_page'    => $paginator->lastPage(),
+                    ],
+                ];
+            });
 
             return response()->json([
                 'success' => true,
@@ -156,6 +154,11 @@ class TierController extends Controller
                 }
 
                 $isDefault = (bool) $request->boolean('is_default');
+                $status = (string) $request->input('status');
+
+                if ($status === 'disabled' && $tier->users()->count() > 0) {
+                    throw new \RuntimeException('Cấp tài khoản đang có user áp dụng, không thể chuyển sang trạng thái tắt');
+                }
 
                 // Nếu set default => bỏ default các tier khác (trừ chính nó)
                 if ($isDefault) {
@@ -168,7 +171,7 @@ class TierController extends Controller
                 $tier->update([
                     'name'    => $request->input('name'),
                     'code'    => $request->input('code'),
-                    'status'  => $request->input('status'),
+                    'status'  => $status,
                     'default' => $isDefault ? 1 : 0,
                 ]);
             });
@@ -187,6 +190,11 @@ class TierController extends Controller
                 'message' => 'Cập nhật tier thành công',
                 'data'    => $tier->fresh(),
             ], 200);
+        } catch (\RuntimeException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 400);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -199,7 +207,7 @@ class TierController extends Controller
     /**
      * DELETE /api/tiers/{id}
      */
-        public function destroy(string $id)
+    public function destroy(string $id)
     {
         try {
             $deleted = false;
@@ -212,12 +220,12 @@ class TierController extends Controller
                     return;
                 }
 
-                // Chặn xóa nếu đã có user gán tier này
-                $hasUser = User::query()
-                    ->where('tier_id', $tier->id)
-                    ->exists();
-                if ($hasUser) {
-                    throw new \RuntimeException('Tier đã được gán cho người dùng, không thể xoá');
+                if ($tier->prices()->count() > 0) {
+                    throw new \RuntimeException('Cấp tài khoản đã có prices, không thể xoá');
+                }
+
+                if ($tier->users()->count() > 0) {
+                    throw new \RuntimeException('Cấp tài khoản đã có user, không thể xoá');
                 }
 
                 $deleted = (bool) $tier->delete();
@@ -252,6 +260,7 @@ class TierController extends Controller
 
     public function create()
     {}
+
     public function edit(string $id)
     {}
 }

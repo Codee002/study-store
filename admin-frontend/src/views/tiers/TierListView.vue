@@ -1,6 +1,5 @@
 <template>
   <div class="row g-3">
-    <!-- Header -->
     <div class="col-12">
       <div
         class="d-flex align-items-start align-items-md-center justify-content-between gap-2 flex-column flex-md-row"
@@ -20,7 +19,6 @@
       </div>
     </div>
 
-    <!-- Toolbar -->
     <div class="col-12">
       <div class="card card-soft">
         <div class="card-body">
@@ -37,10 +35,10 @@
                   placeholder="Tìm theo tên hoặc mã..."
                 />
                 <button
-                  class="btn btn-outline-secondary"
-                  @click="keyword = ''"
                   v-if="keyword"
+                  class="btn btn-outline-secondary"
                   title="Clear"
+                  @click="keyword = ''"
                 >
                   <i class="fa-solid fa-xmark"></i>
                 </button>
@@ -61,7 +59,6 @@
       </div>
     </div>
 
-    <!-- Table -->
     <div class="col-12">
       <div class="card card-soft">
         <div class="card-body p-0">
@@ -88,22 +85,31 @@
                   </td>
 
                   <td>
-                    <span
-                      class="badge"
+                    <button
+                      class="badge badge-toggle"
+                      type="button"
                       :class="t.status === 'actived' ? 'badge-on' : 'badge-off'"
+                      :disabled="togglingIds.includes(t.id)"
+                      @click="onToggleStatus(t)"
                     >
-                      {{ t.status === "actived" ? "Bật" : "Tắt" }}
-                    </span>
+                      {{
+                        togglingIds.includes(t.id)
+                          ? "Đang đổi..."
+                          : t.status === "actived"
+                            ? "Bật"
+                            : "Tắt"
+                      }}
+                    </button>
                   </td>
 
                   <td>
                     <i
-                      class="fa-solid fa-circle-check"
                       v-if="t.default"
+                      class="fa-solid fa-circle-check"
                       style="color: #16a34a"
                       title="Default"
                     ></i>
-                    <span class="opacity-50" v-else>--</span>
+                    <span v-else class="opacity-50">--</span>
                   </td>
 
                   <td class="text-end pe-3">
@@ -118,7 +124,7 @@
 
                       <button
                         class="icon-btn icon-delete"
-                        title="Xoá"
+                        title="Xóa"
                         @click="onDeleteClick(t.id)"
                       >
                         <i class="fa-solid fa-trash"></i>
@@ -132,9 +138,7 @@
                 <tr>
                   <td colspan="5" class="text-center py-5">
                     <div class="opacity-75">
-                      <i
-                        class="fa-regular fa-folder-open fs-4 d-block mb-2"
-                      ></i>
+                      <i class="fa-regular fa-folder-open fs-4 d-block mb-2"></i>
                       Không có cấp phù hợp.
                     </div>
                   </td>
@@ -143,10 +147,9 @@
             </table>
           </div>
 
-          <!-- Pagination -->
           <div
-            class="d-flex justify-content-between align-items-center p-3 border-top"
             v-if="meta.total"
+            class="d-flex justify-content-between align-items-center p-3 border-top"
           >
             <div class="small opacity-75">
               Hiển thị {{ (meta.current_page - 1) * meta.per_page + 1 }}
@@ -183,7 +186,7 @@
 </template>
 
 <script setup>
-import { computed, ref, watch, onMounted } from "vue";
+import { onMounted, ref, watch } from "vue";
 import Swal from "sweetalert2";
 import TierService from "../../services/tier.service";
 
@@ -193,6 +196,7 @@ const perPage = 5;
 
 const meta = ref({ current_page: 1, per_page: 10, total: 0, last_page: 1 });
 const items = ref([]);
+const togglingIds = ref([]);
 
 async function fetchTiers() {
   try {
@@ -225,7 +229,6 @@ watch(keyword, async () => {
 });
 
 watch(page, async () => {
-  console.log(page.value);
   await fetchTiers();
 });
 
@@ -247,6 +250,32 @@ async function onDeleteClick(id) {
     Swal.fire({ title: "Xóa thành công", icon: "success" });
   } catch (e) {
     Swal.fire("Lỗi", e?.response?.data?.message || "Không thể xóa", "error");
+  }
+}
+
+async function onToggleStatus(tier) {
+  if (togglingIds.value.includes(tier.id)) return;
+
+  togglingIds.value = [...togglingIds.value, tier.id];
+  const nextStatus = tier.status === "actived" ? "disabled" : "actived";
+
+  try {
+    await TierService.update(tier.id, {
+      name: tier.name,
+      code: tier.code,
+      status: nextStatus,
+      is_default: !!tier.default,
+    });
+
+    tier.status = nextStatus;
+  } catch (e) {
+    await Swal.fire(
+      "Lỗi",
+      e?.response?.data?.message || "Không thể cập nhật trạng thái",
+      "error"
+    );
+  } finally {
+    togglingIds.value = togglingIds.value.filter((id) => id !== tier.id);
   }
 }
 </script>
@@ -277,13 +306,23 @@ async function onDeleteClick(id) {
   border: 1px solid color-mix(in srgb, #16a34a 40%, transparent);
   color: var(--font-color);
 }
+
 .badge-off {
   background: color-mix(in srgb, #ef4444 14%, transparent);
   border: 1px solid color-mix(in srgb, #ef4444 40%, transparent);
   color: var(--font-color);
 }
 
-/* Icon buttons */
+.badge-toggle {
+  min-width: 88px;
+  cursor: pointer;
+}
+
+.badge-toggle:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
 .icon-btn {
   width: 36px;
   height: 36px;
@@ -296,19 +335,23 @@ async function onDeleteClick(id) {
   text-decoration: none;
   transition: 0.12s ease;
 }
+
 .icon-btn:hover {
   background: var(--hover-background-color);
   border-color: var(--hover-border-color);
 }
+
 .icon-add {
   color: #16a34a;
   width: 42px;
   height: 42px;
   border-radius: 1rem;
 }
+
 .icon-edit {
   color: #f59e0b;
 }
+
 .icon-delete {
   color: #ef4444;
 }
