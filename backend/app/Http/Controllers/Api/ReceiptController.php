@@ -48,6 +48,7 @@ class ReceiptController extends Controller
                         ->leftJoinSub($aggSub, 'rd', function ($join) {
                             $join->on('rd.receipt_id', '=', 'receipts.id');
                         })
+                        ->withCount(['receiptDetails as items_count'])
                         ->with('warehouse')
                         ->with('supplier');
 

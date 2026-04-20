@@ -86,12 +86,12 @@ class WarehouseService
         $detail = $this->findDetailForUpdate($warehouseId, $productId, $colorId);
 
         if (! $detail) {
-            throw new \RuntimeException('Warehouse stock not found');
+            throw new \RuntimeException('Không tìm thấy kho');
         }
 
         $newQty = (int) $detail->quantity - $quantity;
         if ($newQty < 0) {
-            throw new \RuntimeException('Not enough stock');
+            throw new \RuntimeException('Không đủ hàng trong kho');
         }
 
         $detail->quantity = $newQty;
